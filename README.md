@@ -10,7 +10,7 @@ Du ger en URL-fil per vecka, och scriptet genererar:
 
 Scriptet kan också (om möjligt) filtrera bort spel som gjorts efter en deadline:
 - *_all.xlsx innehåller alla spel
-- *_filtered.xlsx innehåller endast spel innan deadline (om timestamps kan hämtas)
+- *_filtered.xlsx innehåller endast spel innan deadline 
 
 
 ------------------------------------------------------------
@@ -37,6 +37,7 @@ För varje vecka:
 urls_weekX.txt (en challenge-URL per rad), t.ex.
 
 https://www.geoguessr.com/challenge/a2VSPJrVz2RwATaN
+
 https://www.geoguessr.com/challenge/xxxxxxxxxxxxxxxx
 
 Kommentarer med # ignoreras.
@@ -58,13 +59,13 @@ Hämta _ncfa (Chrome):
 
 Sätt sedan env-var:
 
-Windows (cmd):
+*Windows (cmd):*
 set GEOGUESSR_NCFA=PASTE_VALUE_HERE
 
-PowerShell:
+*PowerShell:*
 $env:GEOGUESSR_NCFA="PASTE_VALUE_HERE"
 
-macOS/Linux:
+*macOS/Linux:*
 export GEOGUESSR_NCFA="PASTE_VALUE_HERE"
 
 Du kan även skicka värdet direkt:
@@ -102,12 +103,9 @@ KÖRNING (UTAN DEADLINE-FILTER)
 ------------------------------------------------------------
 
 Exempel med två veckor:
-
-python geoguessr_league_build_xlsx.py ^
-  --week "Vecka 1|urls_week1.txt" ^
-  --week "Vecka 2|urls_week2.txt" ^
-  --out-base "Liga"
-
+```
+python geoguessr_league_build_xlsx.py --week "Vecka 1|urls_week1.txt"  --week "Vecka 2|urls_week2.txt"  --out-base "Liga"
+```
 Output:
 Liga_all.xlsx
 
@@ -116,11 +114,10 @@ Liga_all.xlsx
 DEADLINE-FILTER (VALFRITT)
 ------------------------------------------------------------
 
-python geoguessr_league_build_xlsx.py ^
-  --week "Vecka 1|urls_week1.txt|2026-02-18 20:00" ^
-  --week "Vecka 2|urls_week2.txt|2026-02-25 20:00" ^
-  --fetch-played-at ^
-  --out-base "Liga"
+```
+python geoguessr_league_build_xlsx.py  --week "Vecka 1|urls_week1.txt|2026-02-18 20:00"  --week "Vecka 2|urls_week2.txt|2026-02-25 20:00"   --fetch-played-at  --out-base "Liga"
+```
+
 
 Output (om timestamps kan extraheras):
 - Liga_all.xlsx

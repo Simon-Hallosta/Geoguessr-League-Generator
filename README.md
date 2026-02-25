@@ -1,208 +1,233 @@
-# GeoGuessr League → Excel (Weekly tabs + Total + Stats)
+# 🌍 GeoGuessr League → Excel
 
-Det här scriptet bygger en liga-översikt i Excel från GeoGuessr challenge-URL:er.
-Du ger en URL-fil per vecka, och scriptet genererar:
+> Build a structured league spreadsheet from GeoGuessr challenge URLs  
+> Weekly tabs · Total standings · Advanced statistics · Optional deadline filtering
 
-- En flik per vecka (t.ex. Vecka 1, Vecka 2, …) i ett format som liknar ligaspreadsheetet
-- En flik "Total" som summerar alla veckor
-- En flik "Stats" med totalsummor och snitt (per karta, per vecka, mm)
-- En flik "Raw" med underliggande data
+---
 
-Scriptet kan också (om möjligt) filtrera bort spel som gjorts efter en deadline:
-- *_all.xlsx innehåller alla spel
-- *_filtered.xlsx innehåller endast spel innan deadline 
+## ✨ Features
 
+- 📅 One sheet per week (e.g. *Vecka 1, Vecka 2, …*)
+- 🏆 Automatic **Total standings**
+- 📊 Advanced **Stats sheet**
+- 🔍 Full **Raw data export**
+- ⏱ Optional **deadline filtering**
+- ⚖️ Configurable tie-breaking logic
+- 🧮 Borda-based league scoring
 
-------------------------------------------------------------
-KRAV
-------------------------------------------------------------
+---
 
-- Python 3.9+ rekommenderas (3.10/3.11 fungerar)
-- Paket:
-  - requests
-  - pandas
-  - openpyxl
+## 🗂 Excel Output Structure
 
-Installera:
+| Sheet | Contents |
+|--------|----------|
+| **Vecka X** | Weekly ranking + Borda points per map |
+| **Total** | Aggregated standings across all weeks |
+| **Stats** | Performance metrics & averages |
+| **Raw** | Underlying structured dataset |
 
+---
+
+# 🚀 Installation
+
+## Requirements
+
+- Python **3.9+** (3.10 / 3.11 recommended)
+- `requests`
+- `pandas`
+- `openpyxl`
+
+Install dependencies:
+
+```bash
 pip install requests pandas openpyxl
+```
+
+---
+
+# 📥 Input Files
+
+For each week, create:
+urls_weekX.txt
 
 
-------------------------------------------------------------
-FILER DU BEHÖVER
-------------------------------------------------------------
-
-För varje vecka:
-
-urls_weekX.txt (en challenge-URL per rad), t.ex.
-
+Each file contains one challenge URL per line:
 https://www.geoguessr.com/challenge/a2VSPJrVz2RwATaN
-
 https://www.geoguessr.com/challenge/xxxxxxxxxxxxxxxx
 
-Kommentarer med # ignoreras.
+
+Lines starting with `#` are ignored.
+
+---
+
+# 🔐 Authentication (Required)
+
+GeoGuessr blocks automated login.  
+This script requires your authenticated browser session cookie: `_ncfa`.
+
+---
+
+## Step 1 — Log in normally
+
+Log in to GeoGuessr in Chrome.
+
+---
+
+## Step 2 — Open DevTools
+
+Navigate to:
+DevTools → Application → Cookies → https://www.geoguessr.com
 
 
-------------------------------------------------------------
-AUTENTISERING (_ncfa-cookie)
-------------------------------------------------------------
+![DevTools Application Tab](/img/f12-application.png)
 
-GeoGuessr kan blockera automatiserad inloggning. Scriptet använder därför cookie-värdet `_ncfa` från en normal, inloggad webbläsarsession.
+---
 
-Hämta _ncfa (Chrome):
+## Step 3 — Copy `_ncfa`
 
-1. Öppna GeoGuessr i Chrome och logga in normalt.
-2. Öppna DevTools → Application
-3. Cookies → https://www.geoguessr.com
-4. Leta upp cookie `_ncfa`
-5. Kopiera värdet
+Locate the `_ncfa` cookie and copy its value.
 
-Sätt sedan env-var:
+![Copy _ncfa Cookie Value](/img/_ncfa-cookie-value.png)
 
-*Windows (cmd):*
+---
+
+## Step 4 — Set Environment Variable
+
+### Windows (cmd)
+
+```bash
 set GEOGUESSR_NCFA=PASTE_VALUE_HERE
+```
 
-*PowerShell:*
+### PowerShell
+
+```powershell
 $env:GEOGUESSR_NCFA="PASTE_VALUE_HERE"
+```
 
-*macOS/Linux:*
+### macOS / Linux
+
+```bash
 export GEOGUESSR_NCFA="PASTE_VALUE_HERE"
-
-Du kan även skicka värdet direkt:
-
-python geoguessr_league_build_xlsx.py --ncfa "PASTE_VALUE_HERE" ...
-
-
-------------------------------------------------------------
-POÄNGLOGIK
-------------------------------------------------------------
-
-Per karta (challenge):
-- Primärt: högre total_pts är bättre
-- Tie-break: lägre total_time (tiden för 5 rundor) är bättre
-- Exakt lika (poäng + tid): löses via --tie (default average)
-
-Ligapoäng:
-- Borda-poäng per karta
-- Om N spelare på en karta:
-  - Bästa får N
-  - Tvåan får N-1
-  - ...
-  - Sista får 1
-- Vid exakt lika (poäng + tid) används tie-mode
-
-Veckosumma:
-- Summa av Borda-poäng över veckans kartor
-
-Totalställning:
-- Summa av veckornas Borda-poäng över alla veckor
-
-
-------------------------------------------------------------
-KÖRNING (UTAN DEADLINE-FILTER)
-------------------------------------------------------------
-
-Exempel med två veckor:
 ```
-python geoguessr_league_build_xlsx.py --week "Vecka 1|urls_week1.txt"  --week "Vecka 2|urls_week2.txt"  --out-base "Liga"
+
+Or pass it directly:
+
+```bash
+python geoguessr_league_build_xlsx.py --ncfa "PASTE_VALUE_HERE"
 ```
+
+---
+
+# 🧮 Scoring Logic
+
+## Map Ranking
+
+For each challenge:
+
+1. Higher `total_pts` ranks higher
+2. Tie-break: lower `total_time`
+3. Exact ties resolved via `--tie` mode
+
+---
+
+## 🏁 League Points (Borda System)
+
+If **N players** played a map:
+
+| Rank | Points |
+|------|--------|
+| 1st | N |
+| 2nd | N−1 |
+| ... | ... |
+| Last | 1 |
+
+Weekly score = Sum of Borda points  
+Total score = Sum of weekly totals
+
+---
+
+# ▶ Running the Script
+
+## Without Deadline Filter
+
+Example with two weeks:
+
+```bash
+python geoguessr_league_build_xlsx.py \
+  --week "Vecka 1|urls_week1.txt" \
+  --week "Vecka 2|urls_week2.txt" \
+  --out-base "Liga"
+```
+
 Output:
 Liga_all.xlsx
 
 
-------------------------------------------------------------
-DEADLINE-FILTER (VALFRITT)
-------------------------------------------------------------
+---
 
+## ⏱ With Deadline Filtering
+
+```bash
+python geoguessr_league_build_xlsx.py \
+  --week "Vecka 1|urls_week1.txt|2026-02-18 20:00" \
+  --week "Vecka 2|urls_week2.txt|2026-02-25 20:00" \
+  --fetch-played-at \
+  --out-base "Liga"
 ```
-python geoguessr_league_build_xlsx.py  --week "Vecka 1|urls_week1.txt|2026-02-18 20:00"  --week "Vecka 2|urls_week2.txt|2026-02-25 20:00"   --fetch-played-at  --out-base "Liga"
+
+Output:
+Liga_all.xlsx
+Liga_filtered.xlsx
+
+
+Default timezone: `Europe/Stockholm`
+
+Override:
+
+```bash
+python geoguessr_league_build_xlsx.py --tz "Europe/Stockholm"
 ```
 
+---
 
-Output (om timestamps kan extraheras):
-- Liga_all.xlsx
-- Liga_filtered.xlsx
+# 🛠 Useful Flags
 
-Timezone:
-Deadlines tolkas i timezone från --tz (default Europe/Stockholm).
+| Flag | Purpose |
+|------|----------|
+| `--debug` | Enable verbose output |
+| `--dump-json` | Dump raw API JSON |
+| `--tie` | Tie mode: average / dense / min / max |
+| `--timeout` | HTTP timeout |
+| `--page-size` | Pagination size |
+| `--max-players` | Player limit |
 
-Exempel:
-python geoguessr_league_build_xlsx.py ... --tz "Europe/Stockholm"
+Example:
 
+```bash
+python geoguessr_league_build_xlsx.py --tie dense --timeout 60
+```
 
-------------------------------------------------------------
-VAD SOM HAMNAR I EXCEL
-------------------------------------------------------------
+---
 
-Vecka X:
-- Rank
-- Spelare
-- Veckopoäng
-- Borda-poäng per karta
-- Kartnamn (från payload)
-- Regelsammanfattning (Moving/NM/NMPZ + tidsgräns)
-- Klickbar länk till challenge
+# 🧪 Troubleshooting
 
-Total:
-- Totalställning över alla veckor
-- Per-vecka-poäng som egna kolumner
+### ❌ Missing `_ncfa`
+Ensure `GEOGUESSR_NCFA` is correctly set.
 
-Stats:
-- Total Borda
-- Total pts
-- Antal kartor
-- Antal veckor
-- Snitt Borda per karta
-- Snitt Borda per vecka
-- Snitt pts per karta
-- Bästa vecka
+### ❌ Filtered file not created
+- Deadline must be specified
+- `--fetch-played-at` must be enabled
+- API must return timestamps
 
-Raw:
-- Underliggande rad-data
+### ❌ Empty results
+- Verify challenge URLs
+- Refresh your `_ncfa` cookie
+- Run with `--debug` or `--dump-json`
 
+---
 
-------------------------------------------------------------
-NYTTIGA FLAGGOR
-------------------------------------------------------------
+# ⚠ Disclaimer
 
-Debug:
-python geoguessr_league_build_xlsx.py ... --debug
-
-Dumpa JSON:
-python geoguessr_league_build_xlsx.py ... --dump-json
-
-Tie-mode:
-python geoguessr_league_build_xlsx.py ... --tie average
-Alternativ: dense, min, max
-
-Timeout:
-python geoguessr_league_build_xlsx.py ... --timeout 60
-
-Pagination:
-python geoguessr_league_build_xlsx.py ... --page-size 200 --max-players 5000
-
-
-------------------------------------------------------------
-FELSÖKNING
-------------------------------------------------------------
-
-Missing _ncfa:
-Sätt GEOGUESSR_NCFA till korrekt cookie-värde.
-
-Filterad fil skapas inte:
-- Deadline måste anges
-- --fetch-played-at måste vara aktiverat
-- API måste returnera timestamps
-
-Tomma resultat:
-- Kontrollera URL:er
-- Hämta ny _ncfa
-- Kör med --debug eller --dump-json
-
-
-------------------------------------------------------------
-ANSVARSFRISKRIVNING
-------------------------------------------------------------
-
-Detta är ett inofficiellt verktyg.
-Använd på egen risk och respektera GeoGuessrs villkor.
+This is an unofficial tool.  
+Use at your own risk and respect GeoGuessr's terms of service.

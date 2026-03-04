@@ -47,7 +47,9 @@ pip install requests pandas openpyxl
 
 # 🖥 Desktop App (utan terminal)
 
-En separat GUI-app finns i `desktop_app/` och lämnar CLI-scriptet oförändrat.
+CLI-varianten är fortfarande huvudflödet i projektet, men det finns även en desktop-app för användare som vill slippa terminal.
+
+Desktop-appen ligger i `desktop_app/` och återanvänder samma kärnlogik som CLI-scriptet.
 
 Starta:
 
@@ -59,7 +61,11 @@ Windows (dubbelklick):
 
 `desktop_app/start_gui_windows.bat`
 
-Mer info:
+Screenshot:
+
+![Desktop App UI](img/desktop_app_UI.jpg)
+
+Detaljerad desktop-guide:
 
 `desktop_app/README.md`
 

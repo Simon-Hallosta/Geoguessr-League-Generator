@@ -10,6 +10,12 @@ Från projektroten:
 python desktop_app/app.py
 ```
 
+För kalender-popup i deadline-dialogen vid script-körning:
+
+```bash
+pip install tkcalendar
+```
+
 På Windows kan ni även dubbelklicka:
 
 `desktop_app/start_gui_windows.bat`
@@ -20,7 +26,10 @@ På Windows kan ni även dubbelklicka:
 - Kan spara `GEOGUESSR_NCFA` permanent i Windows (`setx`)
 - Låter dig välja vilka `.txt`-filer som ska användas
 - Låter dig skapa nya veckofiler i `week_urls/`
+- Har deadline-dialog med datum + klockslag (kalenderväljare om `tkcalendar` finns)
 - Minns valda veckofiler och inställningar mellan starter
+- Visar löpande progress + live-logg under längre körningar
+- Om outputfilen är låst/upptagen väljs automatiskt nästa lediga namn (t.ex. `Liga (1)`)
 - Kör generatorn och skapar samma Excel-filer som tidigare
 
 ## Veckofiler

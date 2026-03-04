@@ -402,29 +402,41 @@ def extract_played_at_epoch(game_payload: Any) -> Optional[int]:
     """
     Best-effort scan for typical timestamp keys:
       createdAt, created, updatedAt, finishedAt, endedAt, startTime, endTime, completedAt, etc.
-    Picks the *latest plausible* timestamp (often finished/end time).
+    Prioritizes end/finish timestamps over generic updated/timestamp fields.
     """
-    candidate_keys = {
-        "createdat", "created", "updatedat", "updated",
-        "finishedat", "endedat", "endtime", "completedat", "completed",
-        "startedat", "starttime",
-        "timestamp", "time",
-    }
+    def key_priority(lk: str) -> Optional[int]:
+        if lk in {"finishedat", "endedat", "endtime", "completedat", "completed", "finished", "ended"}:
+            return 0
+        if lk in {"createdat", "created", "startedat", "starttime", "started"}:
+            return 1
+        if any(x in lk for x in ["finished", "ended", "completed", "end"]):
+            return 2
+        if any(x in lk for x in ["created", "started", "start"]):
+            return 3
+        if lk in {"timestamp", "time"}:
+            return 4
+        if lk in {"updatedat", "updated"} or "updated" in lk:
+            return 5
+        return None
 
-    best: Optional[int] = None
+    best: Optional[Tuple[int, int]] = None  # (priority, epoch)
 
     for d in _iter_all_dicts(game_payload):
         for k, v in d.items():
             lk = str(k).lower()
-            if lk in candidate_keys or any(x in lk for x in ["created", "finished", "ended", "completed", "start", "end", "updated"]):
-                ep = _try_parse_epoch(v)
-                if ep is None:
-                    continue
-                # choose the latest plausible
-                if best is None or ep > best:
-                    best = ep
+            prio = key_priority(lk)
+            if prio is None:
+                continue
 
-    return best
+            ep = _try_parse_epoch(v)
+            if ep is None:
+                continue
+
+            # Prefer lower priority class; within same class pick latest epoch.
+            if best is None or prio < best[0] or (prio == best[0] and ep > best[1]):
+                best = (prio, ep)
+
+    return best[1] if best is not None else None
 
 
 def fetch_game_details_for_played_at(
@@ -497,17 +509,26 @@ def parse_deadline_epoch(deadline_str: str, tz_name: str) -> int:
     if ZoneInfo is None:
         raise RuntimeError("zoneinfo not available. Use Python 3.9+ or install backports.zoneinfo.")
 
-    tz = ZoneInfo(tz_name)
-    # pandas is robust for parsing; treat as naive local then localize
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception as e:
+        raise ValueError(
+            f'Unknown timezone "{tz_name}". Example valid value: "Europe/Stockholm".'
+        ) from e
+
+    # Use pandas only for string parsing. Do timezone attachment/conversion via stdlib
+    # to avoid pandas+zoneinfo incompatibilities in some environments.
     dt = pd.to_datetime(deadline_str)
     if pd.isna(dt):
         raise ValueError(f"Could not parse deadline: {deadline_str}")
-    if getattr(dt, "tzinfo", None) is None:
-        dt = dt.tz_localize(tz)
+
+    py_dt = dt.to_pydatetime() if hasattr(dt, "to_pydatetime") else dt
+    if getattr(py_dt, "tzinfo", None) is None:
+        py_dt = py_dt.replace(tzinfo=tz)
     else:
-        dt = dt.tz_convert(tz)
+        py_dt = py_dt.astimezone(tz)
     # convert to epoch seconds
-    return int(dt.timestamp())
+    return int(py_dt.timestamp())
 
 
 # ============================================================
@@ -621,12 +642,21 @@ def filter_entries_by_deadlines(
     entries: List[Entry],
     deadlines_epoch_by_week: Dict[str, int],
     keep_missing_time: bool,
+    now_epoch: Optional[int] = None,
 ) -> List[Entry]:
+    if now_epoch is None:
+        now_epoch = int(time.time())
+
     out: List[Entry] = []
     for e in entries:
         dl = deadlines_epoch_by_week.get(e.week_label)
         if dl is None:
             # no deadline specified for this week => keep
+            out.append(e)
+            continue
+
+        # Ongoing/future week: never filter out yet.
+        if dl > now_epoch:
             out.append(e)
             continue
 
@@ -1094,7 +1124,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Build filtered data (if possible)
     df_overview_f = df_weekly_f = df_meta_f = df_total_f = df_stats_f = None
     if can_filter:
-        filtered_entries = filter_entries_by_deadlines(all_entries, deadlines_epoch, keep_missing_time=bool(args.keep_missing_time))
+        now_epoch = int(time.time())
+        open_weeks = [w for w, dl in deadlines_epoch.items() if dl > now_epoch]
+        if open_weeks:
+            print(f"[FILTER] open week(s), deadline not reached yet: {open_weeks}. Those weeks are not filtered.")
+
+        filtered_entries = filter_entries_by_deadlines(
+            all_entries,
+            deadlines_epoch,
+            keep_missing_time=bool(args.keep_missing_time),
+            now_epoch=now_epoch,
+        )
         df_overview_f, df_weekly_f, df_meta_f = compute_week_tables(filtered_entries, tie_mode=args.tie)
         df_total_f, df_stats_f = compute_total_tables(df_overview_f)
         print(f"[FILTER] enabled. Filtered rows: {len(filtered_entries)} (from {len(all_entries)})")

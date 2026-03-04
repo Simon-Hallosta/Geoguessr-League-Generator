@@ -545,9 +545,9 @@ def build_week_entries(
     page_size: int,
     max_players: int,
     fetch_played_at: bool,
-) -> Tuple[List[Entry], bool]:
+) -> Tuple[List[Entry], bool, int]:
     """
-    Returns (entries, has_any_played_at).
+    Returns (entries, has_any_played_at, failed_maps_count).
     """
     urls = load_urls(week.urls_path)
     if not urls:
@@ -555,6 +555,7 @@ def build_week_entries(
 
     out_entries: List[Entry] = []
     has_any_played_at = False
+    failed_maps_count = 0
 
     debug_dir = week.urls_path.parent / "debug_json"
     if dump_json:
@@ -564,14 +565,19 @@ def build_week_entries(
 
     for map_idx, url in enumerate(urls, start=1):
         token = extract_token(url)
-        items = fetch_highscores_items(
-            session=session,
-            challenge_token=token,
-            timeout=timeout,
-            debug=debug,
-            page_size=page_size,
-            max_players=max_players,
-        )
+        try:
+            items = fetch_highscores_items(
+                session=session,
+                challenge_token=token,
+                timeout=timeout,
+                debug=debug,
+                page_size=page_size,
+                max_players=max_players,
+            )
+        except Exception as e:
+            failed_maps_count += 1
+            print(f"[WARN] {week.label} map {map_idx}: kunde inte hämta resultat för {url} ({e})")
+            continue
 
         if dump_json:
             p = debug_dir / f"{week.label.replace(' ', '_')}_map{map_idx}_highscores.json"
@@ -631,7 +637,7 @@ def build_week_entries(
                 )
             )
 
-    return out_entries, has_any_played_at
+    return out_entries, has_any_played_at, failed_maps_count
 
 
 # ============================================================
@@ -1097,22 +1103,40 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Build all entries
     all_entries: List[Entry] = []
     any_played_at = False
+    successful_weeks: List[WeekSpec] = []
+    failed_weeks: List[Tuple[str, str]] = []
 
     for w in weeks:
-        entries, has_any = build_week_entries(
-            session=session,
-            week=w,
-            tz_name=args.tz,
-            timeout=args.timeout,
-            debug=args.debug,
-            dump_json=args.dump_json,
-            page_size=args.page_size,
-            max_players=args.max_players,
-            fetch_played_at=bool(args.fetch_played_at and (w.deadline is not None)),
-        )
-        all_entries.extend(entries)
-        any_played_at = any_played_at or has_any
-        print(f"[OK] built entries for {w.label}: {len(entries)} rows")
+        try:
+            entries, has_any, failed_maps = build_week_entries(
+                session=session,
+                week=w,
+                tz_name=args.tz,
+                timeout=args.timeout,
+                debug=args.debug,
+                dump_json=args.dump_json,
+                page_size=args.page_size,
+                max_players=args.max_players,
+                fetch_played_at=bool(args.fetch_played_at and (w.deadline is not None)),
+            )
+            all_entries.extend(entries)
+            any_played_at = any_played_at or has_any
+            successful_weeks.append(w)
+            print(f"[OK] built entries for {w.label}: {len(entries)} rows")
+            if failed_maps > 0:
+                print(f"[WARN] {w.label}: {failed_maps} map(ar) kunde inte hämtas och hoppades över.")
+        except Exception as e:
+            failed_weeks.append((w.label, str(e)))
+            print(f"[WARN] hoppar över vecka {w.label}: {e}")
+            continue
+
+    if not successful_weeks:
+        raise SystemExit("Kunde inte bearbeta någon vecka. Kontrollera URL-filer, _ncfa och nätverksåtkomst.")
+
+    if failed_weeks:
+        print("[WARN] följande veckor kunde inte bearbetas:")
+        for label, err in failed_weeks:
+            print(f"  - {label}: {err}")
 
     # Compute tables for ALL (unfiltered)
     df_overview_all, df_weekly_all, df_meta_all = compute_week_tables(all_entries, tie_mode=args.tie)
@@ -1152,10 +1176,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     # remove default sheet
     wb_all.remove(wb_all.active)
 
-    week_labels = [w.label for w in weeks]
+    week_labels = [w.label for w in successful_weeks]
 
     # Week tabs (ALL)
-    for w in weeks:
+    for w in successful_weeks:
         dl_str = w.deadline or ""
         write_week_sheet(wb_all, w.label, f"Deadline {dl_str}" if dl_str else "Deadline", df_weekly_all, df_overview_all, df_meta_all)
 
@@ -1172,7 +1196,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         wb_f = Workbook()
         wb_f.remove(wb_f.active)
 
-        for w in weeks:
+        for w in successful_weeks:
             dl_str = w.deadline or ""
             write_week_sheet(wb_f, w.label, f"Deadline {dl_str}" if dl_str else "Deadline", df_weekly_f, df_overview_f, df_meta_f)
 

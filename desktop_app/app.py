@@ -287,6 +287,7 @@ class LeagueDesktopApp:
         self._progress_job_id: Optional[str] = None
         self._log_poll_job_id: Optional[str] = None
         self._run_started_at: Optional[float] = None
+        self._saw_warning = False
 
         self.ncfa_var = tk.StringVar(value=os.environ.get("GEOGUESSR_NCFA", ""))
         self.out_base_var = tk.StringVar(value="Liga")
@@ -641,6 +642,8 @@ class LeagueDesktopApp:
         self.log_text.see("end")
 
     def _queue_log_chunk(self, chunk: str) -> None:
+        if "[WARN]" in chunk:
+            self._saw_warning = True
         self._log_queue.put(chunk)
 
     def _poll_log_queue(self) -> None:
@@ -872,6 +875,7 @@ class LeagueDesktopApp:
 
         self._save_state()
         self.is_running = True
+        self._saw_warning = False
         self.set_controls_state(False)
         self.log("[START] Kör generator...")
         self.log("[ARGS] " + " ".join(args))
@@ -923,9 +927,17 @@ class LeagueDesktopApp:
         self._poll_log_queue()
         self.set_controls_state(True)
         self._stop_running_feedback(ok=(exit_code == 0))
+        if exit_code == 0 and self._saw_warning:
+            self.progress_var.set("Klart med varningar.")
         if exit_code == 0:
             self.log("[DONE] Klart.")
-            messagebox.showinfo("Klart", "Excel-filer skapades.")
+            if self._saw_warning:
+                messagebox.showwarning(
+                    "Klart med varningar",
+                    "Excel-filer skapades, men en eller flera veckor/kartor kunde inte hämtas fullt ut.\nSe loggen för detaljer.",
+                )
+            else:
+                messagebox.showinfo("Klart", "Excel-filer skapades.")
         else:
             self.log(f"[ERROR] Körning misslyckades (exit code {exit_code}).")
             messagebox.showerror("Fel", "Körning misslyckades. Se loggen.")
@@ -1027,4 +1039,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

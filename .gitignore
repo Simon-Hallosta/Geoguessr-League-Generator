@@ -1,2 +1,11 @@
 *.xlsx
-__pycache__*
+__pycache__/
+*.py[cod]
+
+# PyInstaller output
+build/
+dist/
+*.spec
+
+# Local Windows build environment
+.venv-win/

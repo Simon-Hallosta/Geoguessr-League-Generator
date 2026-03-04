@@ -45,6 +45,26 @@ pip install requests pandas openpyxl
 
 ---
 
+# 🖥 Desktop App (utan terminal)
+
+En separat GUI-app finns i `desktop_app/` och lämnar CLI-scriptet oförändrat.
+
+Starta:
+
+```bash
+python desktop_app/app.py
+```
+
+Windows (dubbelklick):
+
+`desktop_app/start_gui_windows.bat`
+
+Mer info:
+
+`desktop_app/README.md`
+
+---
+
 # 📥 Input Files
 
 For each week, create:

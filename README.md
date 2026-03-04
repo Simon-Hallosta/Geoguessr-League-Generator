@@ -154,10 +154,7 @@ Total score = Sum of weekly totals
 Example with two weeks:
 
 ```bash
-python geoguessr_league_build_xlsx.py \
-  --week "Vecka 1|urls_week1.txt" \
-  --week "Vecka 2|urls_week2.txt" \
-  --out-base "Liga"
+python geoguessr_league_build_xlsx.py  --week "Vecka 1|urls_week1.txt"  --week "Vecka 2|urls_week2.txt"   --out-base "Liga"
 ```
 
 Output:
@@ -169,11 +166,7 @@ Liga_all.xlsx
 ## ⏱ With Deadline Filtering
 
 ```bash
-python geoguessr_league_build_xlsx.py \
-  --week "Vecka 1|urls_week1.txt|2026-02-18 20:00" \
-  --week "Vecka 2|urls_week2.txt|2026-02-25 20:00" \
-  --fetch-played-at \
-  --out-base "Liga"
+python geoguessr_league_build_xlsx.py   --week "Vecka 1|urls_week1.txt|2026-02-18 20:00"   --week "Vecka 2|urls_week2.txt|2026-02-25 20:00"   --fetch-played-at   --out-base "Liga"
 ```
 
 Output:

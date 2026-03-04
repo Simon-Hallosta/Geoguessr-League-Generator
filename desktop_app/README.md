@@ -4,6 +4,12 @@ Detta är en GUI-app ovanpå `geoguessr_league_build_xlsx.py`.
 
 ## Starta appen
 
+Rekommenderad start i Windows (primar):
+
+`dist/GeoLeagueBuilder.exe`
+
+Fallback for utveckling/kallsrepo:
+
 Från projektroten:
 
 ```bash
@@ -16,7 +22,7 @@ För kalender-popup i deadline-dialogen vid script-körning:
 pip install tkcalendar
 ```
 
-På Windows kan ni även dubbelklicka:
+Windows fallback (Python-start):
 
 `desktop_app/start_gui_windows.bat`
 

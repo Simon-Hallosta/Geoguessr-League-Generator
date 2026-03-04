@@ -51,13 +51,17 @@ CLI-varianten är fortfarande huvudflödet i projektet, men det finns även en d
 
 Desktop-appen ligger i `desktop_app/` och återanvänder samma kärnlogik som CLI-scriptet.
 
-Starta:
+Rekommenderad start (forvanlig distribution till slutanvandare):
+
+`dist/GeoLeagueBuilder.exe`
+
+Alternativ start fran kallsrepo:
 
 ```bash
 python desktop_app/app.py
 ```
 
-Windows (dubbelklick):
+Windows fallback (om ni vill starta Python-varianten):
 
 `desktop_app/start_gui_windows.bat`
 

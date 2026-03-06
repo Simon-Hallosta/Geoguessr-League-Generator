@@ -1428,6 +1428,17 @@ def compute_fast_round_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFra
     return out
 
 
+def format_seconds_compact(v: Any) -> str:
+    secs = _parse_int_maybe(v)
+    if secs is None or secs < 0:
+        return ""
+    mins = secs // 60
+    rem = secs % 60
+    if mins <= 0:
+        return f"{secs} s"
+    return f"{mins} min {rem} s"
+
+
 # ============================================================
 # Excel output
 # ============================================================
@@ -2394,7 +2405,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
 
     # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
     fast_section_row = section_row + 2 + first_section_max_rows + 3
-    fast_headers = ["#", "Spelare", "Runda pts", "Tid (s)", "Typ"]
+    fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
     fast_leagues = ["Sverige", "Världen"]
     fast_block_cols = len(fast_headers)
     fast_gap_cols = 2
@@ -2408,7 +2419,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
             start_col,
             fast_section_row,
             end_col,
-            f"Snabbaste 5000 - {fast_name}",
+            f"Snabbaste 5k - {fast_name}",
             fill=MID,
             font=FONT_HDR_MED,
             align=CENTER,
@@ -2429,12 +2440,10 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
             ws.cell(r, start_col + 0).value = idx
             ws.cell(r, start_col + 1).value = row.player
             ws.cell(r, start_col + 2).value = int(_parse_int_maybe(row.round_pts) or 0)
-            tval = _parse_int_maybe(row.round_time)
-            ws.cell(r, start_col + 3).value = int(tval) if tval is not None else ""
-            ws.cell(r, start_col + 4).value = row.result_type
+            ws.cell(r, start_col + 3).value = format_seconds_compact(row.round_time)
 
             for c in range(start_col, end_col + 1):
-                align = LEFT if c in (start_col + 1, start_col + 4) else CENTER
+                align = LEFT if c == start_col + 1 else CENTER
                 font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
                 style_cell(ws, r, c, fill=fill, font=font, align=align)
 

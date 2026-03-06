@@ -1437,43 +1437,57 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     ws = wb.create_sheet("Underligor")
-    merge_and_style(ws, 1, 1, 1, 6, "Underligor", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    leagues = ["Moving", "No move", "NMPZ", "Sverige"]
+    block_widths = [4.5, 22.0, 12.0, 10.0, 8.0, 8.0]
+    block_cols = len(block_widths)
+    gap_cols = 1
+    total_cols = (block_cols + gap_cols) * len(leagues) - gap_cols
+    merge_and_style(ws, 1, 1, 1, total_cols, "Underligor", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
-    widths = {1: 4.5, 2: 22.0, 3: 12.0, 4: 10.0, 5: 8.0, 6: 8.0}
+    widths: Dict[int, float] = {}
+    for i in range(len(leagues)):
+        start_col = 1 + i * (block_cols + gap_cols)
+        for offset, w in enumerate(block_widths):
+            widths[start_col + offset] = w
+        if i < len(leagues) - 1:
+            widths[start_col + block_cols] = 3.0
     set_col_widths(ws, widths)
 
     tables = compute_subleague_tables(df_overview)
-    row_cursor = 3
+    section_row = 3
+    headers = ["#", "Spelare", "Poäng", "Total pts", "Kartor", "Veckor"]
 
-    for league_name in ["Moving", "No move", "NMPZ", "Sverige"]:
-        merge_and_style(ws, row_cursor, 1, row_cursor, 6, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
-        row_cursor += 1
+    for i, league_name in enumerate(leagues):
+        start_col = 1 + i * (block_cols + gap_cols)
+        end_col = start_col + block_cols - 1
+        merge_and_style(ws, section_row, start_col, section_row, end_col, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
 
-        headers = ["#", "Spelare", "Poäng", "Total pts", "Kartor", "Veckor"]
-        for c, h in enumerate(headers, start=1):
-            ws.cell(row_cursor, c).value = h
-            style_cell(ws, row_cursor, c, fill=MID, font=FONT_HDR, align=CENTER)
-        row_cursor += 1
+        header_row = section_row + 1
+        for j, h in enumerate(headers):
+            c = start_col + j
+            ws.cell(header_row, c).value = h
+            style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
 
+        data_start_row = section_row + 2
         table = tables.get(league_name, pd.DataFrame())
         for idx, row in enumerate(table.itertuples(index=False), start=1):
-            r = row_cursor + (idx - 1)
+            r = data_start_row + (idx - 1)
             fill = ROW_A if (idx % 2 == 1) else ROW_B
-            ws.cell(r, 1).value = idx
-            ws.cell(r, 2).value = row.player
-            ws.cell(r, 3).value = float(row.league_points)
-            ws.cell(r, 4).value = int(row.total_pts)
-            ws.cell(r, 5).value = int(row.maps_counted)
-            ws.cell(r, 6).value = int(row.weeks_counted)
+            ws.cell(r, start_col + 0).value = idx
+            ws.cell(r, start_col + 1).value = row.player
+            ws.cell(r, start_col + 2).value = float(row.league_points)
+            ws.cell(r, start_col + 3).value = int(row.total_pts)
+            ws.cell(r, start_col + 4).value = int(row.maps_counted)
+            ws.cell(r, start_col + 5).value = int(row.weeks_counted)
 
-            for c in range(1, 7):
+            for c in range(start_col, end_col + 1):
                 align = LEFT if c == 2 else CENTER
-                font = Font(color="000000", bold=True) if c == 3 else FONT_BODY
+                if c == start_col + 1:
+                    align = LEFT
+                font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
                 style_cell(ws, r, c, fill=fill, font=font, align=align)
 
-        row_cursor += max(len(table), 1) + 1
-
-    ws.freeze_panes = "A4"
+    ws.freeze_panes = "A5"
 
 
 def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None) -> None:

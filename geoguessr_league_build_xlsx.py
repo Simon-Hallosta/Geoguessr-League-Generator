@@ -1515,6 +1515,9 @@ def write_visualizations_sheet(
         ax.set_xticks([])
         ax.set_yticks([])
 
+    BASE_FIG_W = 12.0
+    BASE_FIG_H = 9.0  # 4:3
+
     def _save_fig(fig, filename: str) -> Path:
         fig.tight_layout()
         out_path = image_dir / filename
@@ -1543,7 +1546,7 @@ def write_visualizations_sheet(
             return set()
         return set(points_df.loc[mask, "player"].astype(str).tolist())
 
-    def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 6) -> None:
+    def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 7) -> None:
         offsets = [(0, 0), (4, 2), (-4, 2), (4, -2), (-4, -2), (0, 4), (0, -4)]
         for i, (xv, yv, label) in enumerate(zip(x_vals, y_vals, labels)):
             dx, dy = offsets[i % len(offsets)]
@@ -1619,7 +1622,7 @@ def write_visualizations_sheet(
         ("NMPZ", "#7A67D8", "V1C"),
     ]:
         part = dfo[dfo["mode3"] == mode_name].copy()
-        fig, ax = plt.subplots(figsize=(8.6, 4.8))
+        fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
         if not part.empty:
             ax.scatter(part["total_time"] / 60.0, part["total_pts"], s=14, alpha=0.14, color="#808B96", label="Alla rundor")
             by_player = (
@@ -1647,7 +1650,7 @@ def write_visualizations_sheet(
                 [float(x) for x in by_player["mean_time_min"].tolist()],
                 [float(x) for x in by_player["mean_pts"].tolist()],
                 [str(x) for x in by_player["player"].tolist()],
-                fontsize=6,
+                fontsize=7,
             )
             ax.set_xlabel("Tid per karta (min)")
             ax.set_ylabel("GeoGuessr-poäng")
@@ -1668,8 +1671,8 @@ def write_visualizations_sheet(
         top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).reset_index(drop=True)
     v2_labels = [str(x) for x in top_raw["player"].tolist()]
     v2_values = [float(x) for x in pd.to_numeric(top_raw["total_pts"], errors="coerce").fillna(0).tolist()]
-    fig_h = max(6.0, min(13.0, 1.2 + 0.24 * max(1, len(v2_labels))))
-    fig, ax = plt.subplots(figsize=(11.2, fig_h))
+    fig_w = max(BASE_FIG_W, min(16.0, 8.0 + 0.22 * max(1, len(v2_labels))))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
     if v2_values:
         labels_rev = list(reversed(v2_labels))
         vals_rev = list(reversed(v2_values))
@@ -1712,8 +1715,8 @@ def write_visualizations_sheet(
         if col not in v3_pivot.columns:
             v3_pivot[col] = 0.0
     v3_pivot = v3_pivot[["Moving", "No move", "NMPZ"]]
-    fig_h = max(6.0, min(13.0, 1.8 + 0.20 * max(1, len(v3_pivot.index))))
-    fig, ax = plt.subplots(figsize=(10.8, fig_h))
+    fig_w = max(BASE_FIG_W, min(16.0, 8.4 + 0.16 * max(1, len(v3_pivot.index))))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
     if not v3_pivot.empty:
         im = ax.imshow(v3_pivot.values, aspect="auto", cmap="YlGnBu")
         ax.set_xticks([0, 1, 2])
@@ -1736,7 +1739,7 @@ def write_visualizations_sheet(
     )
     v4_labels = [str(x) for x in per_week_players["week"].tolist()]
     v4_values = [float(x) for x in pd.to_numeric(per_week_players["active_players"], errors="coerce").fillna(0).tolist()]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if v4_values:
         xs = list(range(len(v4_values)))
         ax.plot(xs, v4_values, marker="o", color="#E0862B")
@@ -1761,7 +1764,7 @@ def write_visualizations_sheet(
     for cat in v5_labels:
         part = dfo[dfo["slot_key"].isin(cat_slots[cat])]
         v5_values.append(float(part["total_pts"].mean()) if not part.empty else 0.0)
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if any(v5_values):
         xs = list(range(len(v5_values)))
         ax.bar(xs, v5_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B"])
@@ -1792,7 +1795,7 @@ def write_visualizations_sheet(
         if col not in v6_pivot.columns:
             v6_pivot[col] = 0.0
     v6_pivot = v6_pivot[["Moving", "No move", "NMPZ"]]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if not v6_pivot.empty:
         xs = np.arange(len(v6_pivot.index))
         w = 0.26
@@ -1809,7 +1812,7 @@ def write_visualizations_sheet(
     v6_path = _save_fig(fig, "V6_toppspelare_karttyp.png")
 
     # V7: Poangfordelning per karttyp (boxplot)
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     box_data = [
         dfo[dfo["mode3"] == "Moving"]["total_pts"].tolist(),
         dfo[dfo["mode3"] == "No move"]["total_pts"].tolist(),
@@ -1833,7 +1836,7 @@ def write_visualizations_sheet(
         )
     )
     stab["std_pts"] = pd.to_numeric(stab["std_pts"], errors="coerce").fillna(0.0)
-    fig, ax = plt.subplots(figsize=(11.0, 6.6))
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if not stab.empty:
         ax.scatter(stab["std_pts"].tolist(), stab["mean_pts"].tolist(), color="#2A77D4", alpha=0.6, s=30)
         _annotate_all_points(
@@ -1841,7 +1844,7 @@ def write_visualizations_sheet(
             [float(x) for x in stab["std_pts"].tolist()],
             [float(x) for x in stab["mean_pts"].tolist()],
             [str(x) for x in stab["player"].tolist()],
-            fontsize=6,
+            fontsize=7,
         )
         ax.set_xlabel("Standardavvikelse i poäng")
         ax.set_ylabel("Snitt GeoGuessr-poäng")
@@ -1870,9 +1873,8 @@ def write_visualizations_sheet(
         week_player.pivot_table(index="player", columns="week", values="avg_pts", aggfunc="mean")
         .reindex(index=v9_players, columns=weeks_order)
     )
-    fig_h = max(6.0, min(14.0, 1.8 + 0.18 * max(1, len(v9_players))))
-    fig_w = max(10.6, 7.4 + 0.9 * max(1, len(weeks_order)))
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig_w = max(BASE_FIG_W, min(18.0, 8.8 + 0.8 * max(1, len(weeks_order))))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
     if not v9_pivot.empty:
         centered = v9_pivot.sub(v9_pivot.mean(axis=1), axis=0).fillna(0.0)
         im = ax.imshow(centered.values, aspect="auto", cmap="RdYlGn")
@@ -1900,7 +1902,7 @@ def write_visualizations_sheet(
     feat_df = pd.DataFrame(feat_rows)
     feature_cols = ["avg_pts_Moving", "avg_pts_No move", "avg_pts_NMPZ", "avg_pts_Sverige", "avg_time_min", "std_pts"]
 
-    fig = plt.figure(figsize=(12.6, 7.1))
+    fig = plt.figure(figsize=(13.2, 9.9))  # 4:3
     gs = fig.add_gridspec(2, 2, width_ratios=[2.1, 1.0], wspace=0.34, hspace=0.34)
     ax_sc = fig.add_subplot(gs[:, 0])
     ax_l1 = fig.add_subplot(gs[0, 1])
@@ -1938,7 +1940,7 @@ def write_visualizations_sheet(
             [float(x) for x in feat_df["pc1"].tolist()],
             [float(x) for x in feat_df["pc2"].tolist()],
             [str(x) for x in feat_df["player"].tolist()],
-            fontsize=6,
+            fontsize=7,
         )
         ax_sc.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
         ax_sc.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
@@ -1996,8 +1998,8 @@ def write_visualizations_sheet(
         if col not in v11_pivot.columns:
             v11_pivot[col] = 0.0
     v11_pivot = v11_pivot[["Moving", "No move", "NMPZ"]]
-    fig_h = max(6.0, min(13.0, 1.8 + 0.19 * max(1, len(v11_players))))
-    fig, ax = plt.subplots(figsize=(10.8, fig_h))
+    fig_w = max(BASE_FIG_W, min(16.0, 8.2 + 0.16 * max(1, len(v11_players))))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
     if not v11_pivot.empty:
         im = ax.imshow(v11_pivot.values, aspect="auto", cmap="OrRd")
         ax.set_xticks([0, 1, 2])
@@ -2012,27 +2014,27 @@ def write_visualizations_sheet(
 
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
-    first_row = 24
-    row_step = 31
+    first_row = 18
+    row_step = 27
     for i in range(7):
         r = first_row + i * row_step
         anchors.append(f"A{r}")
         anchors.append(f"N{r}")
 
     image_specs: List[Tuple[Path, int, int]] = [
-        (v1_paths[0], 760, 430),
-        (v1_paths[1], 760, 430),
-        (v1_paths[2], 760, 430),
-        (v2_path, 760, 520),
-        (v3_path, 760, 520),
-        (v4_path, 760, 430),
-        (v5_path, 760, 430),
-        (v6_path, 760, 430),
-        (v7_path, 760, 430),
-        (v8_path, 760, 430),
-        (v9_path, 760, 520),
-        (v10_path, 760, 500),
-        (v11_path, 760, 520),
+        (v1_paths[0], 720, 540),
+        (v1_paths[1], 720, 540),
+        (v1_paths[2], 720, 540),
+        (v2_path, 720, 540),
+        (v3_path, 720, 540),
+        (v4_path, 720, 540),
+        (v5_path, 720, 540),
+        (v6_path, 720, 540),
+        (v7_path, 720, 540),
+        (v8_path, 720, 540),
+        (v9_path, 720, 540),
+        (v10_path, 720, 540),
+        (v11_path, 720, 540),
     ]
 
     for idx, (img_path, w, h) in enumerate(image_specs):
@@ -2040,14 +2042,7 @@ def write_visualizations_sheet(
             break
         _insert_image(img_path, anchors[idx], width=w, height=h)
 
-    info_row = first_row + 7 * row_step + 3
-    ws[f"A{info_row}"] = f"Bilder sparade i: {image_dir}"
-    ws[f"A{info_row}"].font = Font(color="4F4F4F", italic=True)
-    ws[f"A{info_row+1}"] = (
-        "Namn i scatter: alla spelare visas. "
-        f"Utökad urvalsregel i V2/V9/V11: full vecka + extra spel (>=7 kartor över minst 2 veckor)."
-    )
-    ws[f"A{info_row+1}"].font = Font(color="4F4F4F", italic=True)
+    # Intentionally no footer text to keep the sheet compact.
 
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:

@@ -5,6 +5,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -35,6 +36,8 @@ def _resolve_base_dir() -> Path:
 ROOT_DIR = _resolve_base_dir()
 WEEK_FILES_DIR = ROOT_DIR / "week_urls"
 APP_STATE_PATH = ROOT_DIR / "desktop_app_state.json"
+INFO_CONFIG_PATH = ROOT_DIR / "information_config.json"
+INFO_CONFIG_LEGACY_DIR = ROOT_DIR / "legacy_configs" / "information"
 APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "geoleague.ico"
 
 BG_APP = "#EEF3FA"
@@ -271,6 +274,99 @@ class DeadlineDialog(tk.Toplevel):
         self.destroy()
 
 
+class InformationConfigDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, initial_rows: list[str], default_rows: list[str], config_path: Path, legacy_dir: Path):
+        super().__init__(master)
+        self.title("Information-flik: konfiguration")
+        self.geometry("980x700")
+        self.minsize(860, 600)
+        self.configure(bg=BG_APP)
+        self.result_rows: Optional[list[str]] = None
+        self.default_rows = list(default_rows)
+        self.config_path = config_path
+        self.legacy_dir = legacy_dir
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        frm = ttk.Frame(self, style="Card.TFrame", padding=12)
+        frm.grid(sticky="nsew")
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            frm,
+            text=(
+                "Ange en punkt per rad för Information-fliken.\n"
+                "När du klickar Spara skrivs config-filen över.\n"
+                "Nuvarande config sparas först som legacy-kopia med datum."
+            ),
+            style="Field.TLabel",
+            justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Label(
+            frm,
+            text=f"Config-fil: {self.config_path}\nLegacy-mapp: {self.legacy_dir}",
+            style="Hint.TLabel",
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+
+        self.text = tk.Text(
+            frm,
+            wrap="word",
+            bg="#FBFCFE",
+            fg=TEXT_MAIN,
+            insertbackground=TEXT_MAIN,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            relief="flat",
+            font=("Segoe UI", 10),
+        )
+        self.text.grid(row=2, column=0, sticky="nsew")
+        self.text.insert("1.0", "\n".join(initial_rows))
+
+        buttons = ttk.Frame(frm, style="Card.TFrame")
+        buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="Återställ default", style="Outline.TButton", command=self.reset_default).pack(side="left")
+        ttk.Button(buttons, text="Avbryt", style="Soft.TButton", command=self.cancel).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text="Spara (skriver över config)", style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
+
+        self.transient(master)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+
+    def reset_default(self) -> None:
+        self.text.delete("1.0", "end")
+        self.text.insert("1.0", "\n".join(self.default_rows))
+
+    def cancel(self) -> None:
+        self.result_rows = None
+        self.destroy()
+
+    def save(self) -> None:
+        raw = self.text.get("1.0", "end")
+        rows = [line.strip() for line in raw.splitlines() if line.strip()]
+        if not rows:
+            messagebox.showerror("Fel", "Lägg till minst en informationsrad.", parent=self)
+            return
+
+        should_save = messagebox.askyesno(
+            "Bekräfta överskrivning",
+            (
+                f"Detta skriver över config-filen:\n{self.config_path}\n\n"
+                f"Nuvarande config sparas först i:\n{self.legacy_dir}\n\n"
+                "Vill du fortsätta?"
+            ),
+            parent=self,
+        )
+        if not should_save:
+            return
+
+        self.result_rows = rows
+        self.destroy()
+
+
 class LeagueDesktopApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -300,6 +396,7 @@ class LeagueDesktopApp:
         self.progress_time_var = tk.StringVar(value="")
 
         self._build_ui()
+        self._ensure_information_config_exists()
         self._load_state()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -535,8 +632,10 @@ class LeagueDesktopApp:
         run_row = ttk.Frame(options_frame, style="Card.TFrame")
         run_row.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(12, 0))
         self.run_btn = ttk.Button(run_row, text="Kör och skapa Excel", style="Accent.TButton", command=self.start_generation)
+        self.info_cfg_btn = ttk.Button(run_row, text="Redigera Information-flik", style="Outline.TButton", command=self.open_information_config_dialog)
         self.open_folder_btn = ttk.Button(run_row, text="Öppna projektmapp", style="Soft.TButton", command=self.open_project_folder)
         self.run_btn.pack(side="left")
+        self.info_cfg_btn.pack(side="left", padx=(8, 0))
         self.open_folder_btn.pack(side="left", padx=(8, 0))
 
         progress_row = ttk.Frame(options_frame, style="Card.TFrame")
@@ -628,6 +727,7 @@ class LeagueDesktopApp:
             self.keep_missing_chk,
             self.debug_chk,
             self.run_btn,
+            self.info_cfg_btn,
             self.open_folder_btn,
         ]:
             widget.configure(state=state)
@@ -827,6 +927,102 @@ class LeagueDesktopApp:
                 return candidate
         return None
 
+    def _default_information_rows(self) -> list[str]:
+        try:
+            rows = league_core.default_information_rows()
+            if isinstance(rows, list) and rows:
+                return [str(x).strip() for x in rows if str(x).strip()]
+        except Exception:
+            pass
+        return [
+            "Ingen anmälan krävs - det är bara att spela veckans challenges!",
+            "För att öppna länken: klicka på den understrukna raden i varje kolumn. Exempelvis \"🔗 Moving 1 | Moving - 3 min\".",
+            "Preliminära poäng utdelas under veckan. De kan gå upp beroende på hur många spelare som placerar sig under dig.",
+            "Poäng delas ut enligt pro league-systemet: sista plats får 1 poäng, näst sista 2 poäng, tredje sista 3 poäng osv.",
+            "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.",
+            "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.",
+            "Vid frågor, skriv i #ligan.",
+        ]
+
+    def _information_config_payload(self, rows: list[str]) -> dict:
+        clean_rows = [str(line).strip() for line in rows if str(line).strip()]
+        if not clean_rows:
+            clean_rows = self._default_information_rows()
+        return {"version": 1, "information_rows": clean_rows}
+
+    def _read_information_rows(self) -> list[str]:
+        if not INFO_CONFIG_PATH.exists():
+            return self._default_information_rows()
+        try:
+            payload = json.loads(INFO_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception as ex:
+            self.log(f"[WARN] Kunde inte läsa information_config.json ({ex}). Använder default.")
+            return self._default_information_rows()
+
+        if isinstance(payload, dict):
+            rows = payload.get("information_rows")
+        elif isinstance(payload, list):
+            rows = payload
+        else:
+            rows = None
+        if not isinstance(rows, list):
+            return self._default_information_rows()
+
+        out = [str(line).strip() for line in rows if str(line).strip()]
+        return out or self._default_information_rows()
+
+    def _ensure_information_config_exists(self) -> None:
+        if INFO_CONFIG_PATH.exists():
+            return
+        try:
+            payload = self._information_config_payload(self._default_information_rows())
+            INFO_CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.log(f"[INFO] Skapade default information-config: {INFO_CONFIG_PATH}")
+        except Exception as ex:
+            self.log(f"[WARN] Kunde inte skapa information-config: {ex}")
+
+    def _save_information_rows_with_legacy_backup(self, rows: list[str]) -> tuple[bool, Optional[Path]]:
+        try:
+            if INFO_CONFIG_PATH.exists():
+                INFO_CONFIG_LEGACY_DIR.mkdir(parents=True, exist_ok=True)
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                legacy_path = INFO_CONFIG_LEGACY_DIR / f"information_config_{stamp}.json"
+                shutil.copy2(INFO_CONFIG_PATH, legacy_path)
+            else:
+                legacy_path = None
+
+            payload = self._information_config_payload(rows)
+            INFO_CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True, legacy_path
+        except Exception as ex:
+            self.log(f"[ERROR] Kunde inte spara information-config: {ex}")
+            return False, None
+
+    def open_information_config_dialog(self) -> None:
+        self._ensure_information_config_exists()
+        initial_rows = self._read_information_rows()
+        default_rows = self._default_information_rows()
+        dlg = InformationConfigDialog(
+            self.root,
+            initial_rows=initial_rows,
+            default_rows=default_rows,
+            config_path=INFO_CONFIG_PATH,
+            legacy_dir=INFO_CONFIG_LEGACY_DIR,
+        )
+        self.root.wait_window(dlg)
+        if dlg.result_rows is None:
+            return
+
+        ok, legacy_path = self._save_information_rows_with_legacy_backup(dlg.result_rows)
+        if not ok:
+            messagebox.showerror("Fel", "Kunde inte spara information-config. Se loggen för detaljer.", parent=self.root)
+            return
+
+        if legacy_path is not None:
+            self.log(f"[OK] Sparade legacy-config: {legacy_path}")
+        self.log(f"[OK] Uppdaterade information-config: {INFO_CONFIG_PATH}")
+        messagebox.showinfo("Klart", "Information-config sparad.", parent=self.root)
+
     def start_generation(self) -> None:
         if self.is_running:
             return
@@ -866,6 +1062,7 @@ class LeagueDesktopApp:
         for week in weeks:
             args.extend(["--week", week.to_week_arg()])
         args.extend(["--out-base", out_base, "--tz", tz_name, "--tie", self.tie_var.get(), "--ncfa", ncfa])
+        args.extend(["--information-config", str(INFO_CONFIG_PATH)])
         if self.fetch_played_at_var.get():
             args.append("--fetch-played-at")
         if self.keep_missing_time_var.get():

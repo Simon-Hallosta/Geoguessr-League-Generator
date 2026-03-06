@@ -33,6 +33,45 @@ ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 EPOCH_RE = re.compile(r"^\d{10,13}$")
 
 DEFAULT_TZ = "Europe/Stockholm"
+DEFAULT_INFORMATION_CONFIG_NAME = "information_config.json"
+
+# Fixed weekly map slots (index -> category)
+MAP_SLOT_KEY_BY_INDEX = {
+    1: "moving_1",
+    2: "moving_2",
+    3: "no_move_1",
+    4: "no_move_2",
+    5: "nmpz_1",
+    6: "nmpz_2",
+}
+
+SLOT_KEYS_ORDER = ["moving_1", "moving_2", "no_move_1", "no_move_2", "nmpz_1", "nmpz_2"]
+
+SLOT_LABEL_BY_KEY = {
+    "moving_1": "Moving 1",
+    "moving_2": "Moving 2",
+    "no_move_1": "No move 1",
+    "no_move_2": "No move 2",
+    "nmpz_1": "NMPZ 1",
+    "nmpz_2": "NMPZ 2",
+}
+
+SUBLEAGUE_SLOT_KEYS = {
+    "Moving": ["moving_1", "moving_2"],
+    "No move": ["no_move_1", "no_move_2"],
+    "NMPZ": ["nmpz_1", "nmpz_2"],
+    "Sverige": ["moving_1", "no_move_2"],
+}
+
+DEFAULT_INFORMATION_ROWS = [
+    "Ingen anmälan krävs - det är bara att spela veckans challenges!",
+    "För att öppna länken: klicka på den understrukna raden i varje kolumn. Exempelvis \"🔗 Moving 1 | Moving - 3 min\".",
+    "Preliminära poäng utdelas under veckan. De kan gå upp beroende på hur många spelare som placerar sig under dig.",
+    "Poäng delas ut enligt pro league-systemet: sista plats får 1 poäng, näst sista 2 poäng, tredje sista 3 poäng osv.",
+    "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.",
+    "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.",
+    "Vid frågor, skriv i #ligan.",
+]
 
 # Excel styling
 DARK = PatternFill("solid", fgColor="2B2B2B")
@@ -97,6 +136,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
 
     ap.add_argument("--out-base", default="Liga_overview", help="Base filename without extension.")
+    ap.add_argument(
+        "--information-config",
+        default="",
+        help=f"Path to JSON config for Information sheet. Default behavior uses ./{DEFAULT_INFORMATION_CONFIG_NAME} when present.",
+    )
     ap.add_argument("--tz", default=DEFAULT_TZ, help="Timezone for deadlines, e.g. Europe/Stockholm")
     ap.add_argument("--ncfa", default="", help="Override GEOGUESSR_NCFA env var")
     ap.add_argument("--timeout", type=float, default=30.0)
@@ -183,6 +227,50 @@ def _parse_int_maybe(x: Any) -> Optional[int]:
         if s.isdigit():
             return int(s)
     return None
+
+
+def map_slot_key(map_index: Any) -> str:
+    idx = _parse_int_maybe(map_index)
+    if idx is None:
+        return "unknown"
+    return MAP_SLOT_KEY_BY_INDEX.get(idx, f"map_{idx}")
+
+
+def map_slot_label(slot_key: str) -> str:
+    return SLOT_LABEL_BY_KEY.get(slot_key, slot_key.replace("_", " ").title())
+
+
+def default_information_rows() -> List[str]:
+    return list(DEFAULT_INFORMATION_ROWS)
+
+
+def _normalize_information_rows(rows: Any) -> List[str]:
+    if not isinstance(rows, list):
+        return default_information_rows()
+    out: List[str] = []
+    for row in rows:
+        if not isinstance(row, str):
+            continue
+        txt = row.strip()
+        if txt:
+            out.append(txt)
+    return out or default_information_rows()
+
+
+def load_information_rows(config_path: Optional[Path], debug: bool = False) -> List[str]:
+    if config_path is None or not config_path.exists():
+        return default_information_rows()
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        debug_print(debug, f"[INFO-CONFIG] failed to parse {config_path}: {e}")
+        return default_information_rows()
+
+    if isinstance(payload, dict):
+        return _normalize_information_rows(payload.get("information_rows"))
+    if isinstance(payload, list):
+        return _normalize_information_rows(payload)
+    return default_information_rows()
 
 
 # ============================================================
@@ -545,15 +633,16 @@ def build_week_entries(
     page_size: int,
     max_players: int,
     fetch_played_at: bool,
-) -> Tuple[List[Entry], bool, int]:
+) -> Tuple[List[Entry], List[dict], bool, int]:
     """
-    Returns (entries, has_any_played_at, failed_maps_count).
+    Returns (entries, map_meta_rows, has_any_played_at, failed_maps_count).
     """
     urls = load_urls(week.urls_path)
     if not urls:
         raise RuntimeError(f"{week.urls_path} is empty")
 
     out_entries: List[Entry] = []
+    map_meta_rows: List[dict] = []
     has_any_played_at = False
     failed_maps_count = 0
 
@@ -565,6 +654,8 @@ def build_week_entries(
 
     for map_idx, url in enumerate(urls, start=1):
         token = extract_token(url)
+        map_name = f"Map {map_idx}"
+        rule_text = ""
         try:
             items = fetch_highscores_items(
                 session=session,
@@ -577,6 +668,15 @@ def build_week_entries(
         except Exception as e:
             failed_maps_count += 1
             print(f"[WARN] {week.label} map {map_idx}: kunde inte hämta resultat för {url} ({e})")
+            map_meta_rows.append(
+                {
+                    "week": week.label,
+                    "map_index": map_idx,
+                    "map_url": url,
+                    "map_name": map_name,
+                    "rule_text": rule_text,
+                }
+            )
             continue
 
         if dump_json:
@@ -584,16 +684,23 @@ def build_week_entries(
             p.write_text(json.dumps({"token": token, "items": items}, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # map info from first item (stable in your payload)
-        map_name = ""
-        rule_text = ""
         if items:
             try:
                 game0 = items[0]["game"]
                 map_name = str(game0.get("mapName") or "").strip()
                 rule_text = rule_text_from_game(game0)
             except Exception:
-                map_name = ""
                 rule_text = ""
+
+        map_meta_rows.append(
+            {
+                "week": week.label,
+                "map_index": map_idx,
+                "map_url": url,
+                "map_name": map_name or f"Map {map_idx}",
+                "rule_text": rule_text or "",
+            }
+        )
 
         for it in items:
             if not isinstance(it, dict) or "game" not in it:
@@ -637,7 +744,7 @@ def build_week_entries(
                 )
             )
 
-    return out_entries, has_any_played_at, failed_maps_count
+    return out_entries, map_meta_rows, has_any_played_at, failed_maps_count
 
 
 # ============================================================
@@ -676,7 +783,7 @@ def filter_entries_by_deadlines(
     return out
 
 
-def compute_week_tables(entries: List[Entry], tie_mode: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Optional[List[dict]] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Returns:
       df_overview_rows: per entry with rank/borda within each (week,map)
@@ -684,10 +791,20 @@ def compute_week_tables(entries: List[Entry], tie_mode: str) -> Tuple[pd.DataFra
       df_week_meta: map meta per (week,map) for headers
     """
     if not entries:
+        if map_meta_rows:
+            df_week_meta = pd.DataFrame(map_meta_rows, columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+            if not df_week_meta.empty:
+                df_week_meta = (
+                    df_week_meta.drop_duplicates(subset=["week", "map_index"], keep="last")
+                    .sort_values(["week", "map_index"])
+                    .reset_index(drop=True)
+                )
+        else:
+            df_week_meta = pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"])
         return (
-            pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text", "player", "total_pts", "total_time", "rank_best", "borda_points", "played_at_epoch"]),
+            pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text", "slot_key", "slot_label", "player", "total_pts", "total_time", "rank_best", "borda_points", "played_at_epoch"]),
             pd.DataFrame(columns=["week", "player", "weekly_borda", "weekly_total_pts", "maps_counted"]),
-            pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"]),
+            df_week_meta,
         )
 
     df = pd.DataFrame([{
@@ -702,14 +819,69 @@ def compute_week_tables(entries: List[Entry], tie_mode: str) -> Tuple[pd.DataFra
         "total_time": e.total_time,
         "played_at_epoch": e.played_at_epoch,
     } for e in entries])
+    df["slot_key"] = df["map_index"].apply(map_slot_key)
+    df["slot_label"] = df["slot_key"].apply(map_slot_label)
 
-    # meta per map
-    df_week_meta = (
+    # discovered meta per map from result payloads
+    df_week_meta_seen = (
         df[["week", "map_index", "map_url", "map_name", "rule_text"]]
         .drop_duplicates()
         .sort_values(["week", "map_index"])
         .reset_index(drop=True)
     )
+
+    if map_meta_rows:
+        df_week_meta_base = pd.DataFrame(map_meta_rows, columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+        if not df_week_meta_base.empty:
+            df_week_meta_base = (
+                df_week_meta_base.drop_duplicates(subset=["week", "map_index"], keep="last")
+                .sort_values(["week", "map_index"])
+                .reset_index(drop=True)
+            )
+    else:
+        df_week_meta_base = pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+
+    if df_week_meta_base.empty:
+        df_week_meta = df_week_meta_seen
+    else:
+        df_week_meta = df_week_meta_base.merge(
+            df_week_meta_seen.rename(
+                columns={
+                    "map_url": "seen_map_url",
+                    "map_name": "seen_map_name",
+                    "rule_text": "seen_rule_text",
+                }
+            ),
+            on=["week", "map_index"],
+            how="left",
+        )
+
+        def _prefer_non_empty(base: Any, seen: Any, fallback: str) -> str:
+            b = str(base).strip() if isinstance(base, str) else ""
+            s = str(seen).strip() if isinstance(seen, str) else ""
+            if s:
+                return s
+            if b:
+                return b
+            return fallback
+
+        df_week_meta["map_url"] = [
+            _prefer_non_empty(b, s, "")
+            for b, s in zip(df_week_meta.get("map_url", pd.Series(dtype=str)), df_week_meta.get("seen_map_url", pd.Series(dtype=str)))
+        ]
+        df_week_meta["map_name"] = [
+            _prefer_non_empty(b, s, f"Map {int(mi)}")
+            for b, s, mi in zip(
+                df_week_meta.get("map_name", pd.Series(dtype=str)),
+                df_week_meta.get("seen_map_name", pd.Series(dtype=str)),
+                df_week_meta["map_index"],
+            )
+        ]
+        df_week_meta["rule_text"] = [
+            _prefer_non_empty(b, s, "")
+            for b, s in zip(df_week_meta.get("rule_text", pd.Series(dtype=str)), df_week_meta.get("seen_rule_text", pd.Series(dtype=str)))
+        ]
+        df_week_meta = df_week_meta[["week", "map_index", "map_url", "map_name", "rule_text"]]
 
     # compute rank/borda within each week+map
     out_rows: List[dict] = []
@@ -748,17 +920,43 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
     """
     Total standings + stats.
     """
+    base_cols_total = [
+        "player",
+        "total_borda",
+        "total_pts",
+        "maps_counted",
+        "weeks_counted",
+        "avg_borda_per_map",
+        "avg_borda_per_week",
+        "avg_pts_per_map",
+        "cat_moving_1",
+        "cat_moving_2",
+        "cat_no_move_1",
+        "cat_no_move_2",
+        "cat_nmpz_1",
+        "cat_nmpz_2",
+        "cat_moving",
+        "cat_no_move",
+        "cat_nmpz",
+        "cat_sverige",
+    ]
+    base_cols_stats = base_cols_total + ["best_week", "best_week_borda", "best_week_pts"]
+
     if df_overview.empty:
-        total = pd.DataFrame(columns=["player", "total_borda", "total_pts", "maps_counted", "weeks_counted", "avg_borda_per_map", "avg_borda_per_week"])
-        stats = pd.DataFrame(columns=["player", "total_borda", "total_pts", "maps_counted", "weeks_counted", "avg_borda_per_map", "avg_borda_per_week", "avg_pts_per_map"])
+        total = pd.DataFrame(columns=base_cols_total)
+        stats = pd.DataFrame(columns=base_cols_stats)
         return total, stats
 
+    dfo = df_overview.copy()
+    dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
+    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+
     by_player = (
-        df_overview.groupby("player", as_index=False)
+        dfo.groupby("player", as_index=False)
         .agg(
             total_borda=("borda_points", "sum"),
             total_pts=("total_pts", "sum"),
-            maps_counted=("map_index", "nunique"),
+            maps_counted=("week_map_key", "nunique"),
             weeks_counted=("week", "nunique"),
         )
     )
@@ -766,15 +964,48 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
     by_player["avg_borda_per_week"] = by_player["total_borda"] / by_player["weeks_counted"].clip(lower=1)
     by_player["avg_pts_per_map"] = by_player["total_pts"] / by_player["maps_counted"].clip(lower=1)
 
+    # Slot totals
+    slot_scores = (
+        dfo[dfo["slot_key"].isin(SLOT_KEYS_ORDER)]
+        .groupby(["player", "slot_key"], as_index=False)
+        .agg(slot_borda=("borda_points", "sum"))
+    )
+    if not slot_scores.empty:
+        slot_pivot = (
+            slot_scores.pivot_table(index="player", columns="slot_key", values="slot_borda", aggfunc="sum")
+            .fillna(0.0)
+            .reset_index()
+        )
+        by_player = by_player.merge(slot_pivot, on="player", how="left")
+
+    for key in SLOT_KEYS_ORDER:
+        if key not in by_player.columns:
+            by_player[key] = 0.0
+
+    by_player = by_player.rename(columns={
+        "moving_1": "cat_moving_1",
+        "moving_2": "cat_moving_2",
+        "no_move_1": "cat_no_move_1",
+        "no_move_2": "cat_no_move_2",
+        "nmpz_1": "cat_nmpz_1",
+        "nmpz_2": "cat_nmpz_2",
+    })
+
+    by_player["cat_moving"] = by_player["cat_moving_1"] + by_player["cat_moving_2"]
+    by_player["cat_no_move"] = by_player["cat_no_move_1"] + by_player["cat_no_move_2"]
+    by_player["cat_nmpz"] = by_player["cat_nmpz_1"] + by_player["cat_nmpz_2"]
+    by_player["cat_sverige"] = by_player["cat_moving_1"] + by_player["cat_no_move_2"]
+
     total = by_player.sort_values(["total_borda", "total_pts"], ascending=[False, False]).reset_index(drop=True)
+    total = total.reindex(columns=base_cols_total)
 
     # extra stats: best week, avg per week, etc.
     per_week = (
-        df_overview.groupby(["player", "week"], as_index=False)
+        dfo.groupby(["player", "week"], as_index=False)
         .agg(
             week_borda=("borda_points", "sum"),
             week_pts=("total_pts", "sum"),
-            week_maps=("map_index", "nunique"),
+            week_maps=("week_map_key", "nunique"),
         )
     )
     best_week = per_week.sort_values(["player", "week_borda", "week_pts"], ascending=[True, False, False]).groupby("player").head(1)
@@ -782,8 +1013,41 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 
     stats = total.merge(best_week, on="player", how="left")
     stats = stats.sort_values(["total_borda", "total_pts"], ascending=[False, False]).reset_index(drop=True)
+    stats = stats.reindex(columns=base_cols_stats)
 
     return total, stats
+
+
+def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    out: Dict[str, pd.DataFrame] = {}
+    if df_overview.empty:
+        for league_name in SUBLEAGUE_SLOT_KEYS:
+            out[league_name] = pd.DataFrame(columns=["player", "league_points", "total_pts", "maps_counted", "weeks_counted"])
+        return out
+
+    dfo = df_overview.copy()
+    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
+
+    for league_name, slots in SUBLEAGUE_SLOT_KEYS.items():
+        part = dfo[dfo["slot_key"].isin(slots)]
+        if part.empty:
+            out[league_name] = pd.DataFrame(columns=["player", "league_points", "total_pts", "maps_counted", "weeks_counted"])
+            continue
+
+        table = (
+            part.groupby("player", as_index=False)
+            .agg(
+                league_points=("borda_points", "sum"),
+                total_pts=("total_pts", "sum"),
+                maps_counted=("week_map_key", "nunique"),
+                weeks_counted=("week", "nunique"),
+            )
+            .sort_values(["league_points", "total_pts"], ascending=[False, False])
+            .reset_index(drop=True)
+        )
+        out[league_name] = table
+    return out
 
 
 # ============================================================
@@ -866,9 +1130,13 @@ def write_week_sheet(
     # header links per map
     for i in range(n_maps):
         c = col_map_start + i
+        slot_key = map_slot_key(maps[i].get("map_index"))
+        slot_label = map_slot_label(slot_key)
         rule = str(maps[i].get("rule_text") or "")
         url = str(maps[i].get("map_url") or "")
-        txt = f"🔗 {rule}".strip()
+        txt = f"🔗 {slot_label}"
+        if rule:
+            txt = f"{txt} | {rule}"
 
         cell = ws.cell(r3, c)
         cell.value = txt
@@ -880,6 +1148,8 @@ def write_week_sheet(
         cell.font = Font(color="FFFFFF", bold=True, underline="single")
 
     ws.freeze_panes = ws["A4"]
+    ws.row_dimensions[r2].height = 38
+    ws.row_dimensions[r3].height = 34
 
     # column widths
     widths = {
@@ -888,7 +1158,7 @@ def write_week_sheet(
         col_total: 8.0,
     }
     for i in range(n_maps):
-        widths[col_map_start + i] = 14.0
+        widths[col_map_start + i] = 20.0
     set_col_widths(ws, widths)
 
     # per-map pivot for this week
@@ -916,7 +1186,7 @@ def write_week_sheet(
 
         for i in range(n_maps):
             c = col_map_start + i
-            map_idx = i + 1
+            map_idx = int(_parse_int_maybe(maps[i].get("map_index")) or (i + 1))
             val = None
             if not pivot.empty and player in pivot.index and map_idx in pivot.columns:
                 v = pivot.loc[player, map_idx]
@@ -930,18 +1200,18 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
     ws = wb.create_sheet("Total")
 
     # Header
-    merge_and_style(ws, 1, 1, 1, 4 + len(weeks), "Totalställning", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 7 + len(weeks), "Totalställning", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
-    headers = ["#", "Spelare", "Poäng (Borda)", "Total pts", "Kartor", "Veckor"] + [f"{w}" for w in weeks]
+    headers = ["#", "Spelare", "Poäng", "Total pts", "Snitt pts/karta", "Kartor", "Veckor"] + [f"{w}" for w in weeks]
     for c, h in enumerate(headers, start=1):
         ws.cell(2, c).value = h
         style_cell(ws, 2, c, fill=MID, font=FONT_HDR, align=CENTER)
 
     ws.freeze_panes = "A3"
 
-    widths = {1: 4.5, 2: 22.0, 3: 14.0, 4: 10.0, 5: 8.0, 6: 8.0}
+    widths = {1: 4.5, 2: 22.0, 3: 14.0, 4: 10.0, 5: 14.0, 6: 8.0, 7: 8.0}
     for i in range(len(weeks)):
-        widths[7 + i] = 12.0
+        widths[8 + i] = 12.0
     set_col_widths(ws, widths)
 
     # per-week totals pivot (borda)
@@ -959,15 +1229,16 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
         ws.cell(r, 2).value = row.player
         ws.cell(r, 3).value = float(row.total_borda)
         ws.cell(r, 4).value = int(row.total_pts)
-        ws.cell(r, 5).value = int(row.maps_counted)
-        ws.cell(r, 6).value = int(row.weeks_counted)
+        ws.cell(r, 5).value = float(getattr(row, "avg_pts_per_map", 0) or 0)
+        ws.cell(r, 6).value = int(row.maps_counted)
+        ws.cell(r, 7).value = int(row.weeks_counted)
 
-        for c in range(1, 7):
+        for c in range(1, 8):
             style_cell(ws, r, c, fill=fill, font=FONT_BODY if c != 3 else Font(color="000000", bold=True), align=CENTER if c != 2 else LEFT)
 
         # week columns
         for j, w in enumerate(weeks):
-            c = 7 + j
+            c = 8 + j
             val = ""
             if not pivot.empty and row.player in pivot.index and w in pivot.columns:
                 v = pivot.loc[row.player, w]
@@ -981,15 +1252,18 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
 def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
     ws = wb.create_sheet("Stats")
 
-    merge_and_style(ws, 1, 1, 1, 10, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 22, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     cols = [
         "#", "Spelare",
-        "Total Borda", "Total pts",
+        "Poäng", "Total pts",
         "Kartor", "Veckor",
-        "Snitt Borda / karta", "Snitt Borda / vecka",
-        "Snitt pts / karta",
-        "Bästa vecka", "Bästa vecka Borda", "Bästa vecka pts",
+        "Moving 1", "Moving 2",
+        "No move 1", "No move 2",
+        "NMPZ 1", "NMPZ 2",
+        "Moving", "No move", "NMPZ", "Sverige",
+        "Snitt poäng / karta", "Snitt poäng / vecka", "Snitt pts / karta",
+        "Bästa vecka", "Bästa vecka poäng", "Bästa vecka pts",
     ]
 
     for c, h in enumerate(cols, start=1):
@@ -1002,9 +1276,12 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
         1: 4.5, 2: 22.0,
         3: 12.0, 4: 10.0,
         5: 8.0, 6: 8.0,
-        7: 14.0, 8: 14.0,
-        9: 12.0,
-        10: 14.0, 11: 16.0, 12: 14.0,
+        7: 10.0, 8: 10.0,
+        9: 10.0, 10: 10.0,
+        11: 10.0, 12: 10.0,
+        13: 10.0, 14: 10.0, 15: 10.0, 16: 10.0,
+        17: 14.0, 18: 14.0, 19: 12.0,
+        20: 14.0, 21: 18.0, 22: 14.0,
     }
     set_col_widths(ws, widths)
 
@@ -1018,17 +1295,89 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
         ws.cell(r, 4).value = int(row.total_pts)
         ws.cell(r, 5).value = int(row.maps_counted)
         ws.cell(r, 6).value = int(row.weeks_counted)
-        ws.cell(r, 7).value = float(row.avg_borda_per_map)
-        ws.cell(r, 8).value = float(row.avg_borda_per_week)
-        ws.cell(r, 9).value = float(row.avg_pts_per_map)
-        ws.cell(r, 10).value = getattr(row, "best_week", "")
-        ws.cell(r, 11).value = float(getattr(row, "best_week_borda", 0) or 0)
-        ws.cell(r, 12).value = float(getattr(row, "best_week_pts", 0) or 0)
+        ws.cell(r, 7).value = float(getattr(row, "cat_moving_1", 0) or 0)
+        ws.cell(r, 8).value = float(getattr(row, "cat_moving_2", 0) or 0)
+        ws.cell(r, 9).value = float(getattr(row, "cat_no_move_1", 0) or 0)
+        ws.cell(r, 10).value = float(getattr(row, "cat_no_move_2", 0) or 0)
+        ws.cell(r, 11).value = float(getattr(row, "cat_nmpz_1", 0) or 0)
+        ws.cell(r, 12).value = float(getattr(row, "cat_nmpz_2", 0) or 0)
+        ws.cell(r, 13).value = float(getattr(row, "cat_moving", 0) or 0)
+        ws.cell(r, 14).value = float(getattr(row, "cat_no_move", 0) or 0)
+        ws.cell(r, 15).value = float(getattr(row, "cat_nmpz", 0) or 0)
+        ws.cell(r, 16).value = float(getattr(row, "cat_sverige", 0) or 0)
+        ws.cell(r, 17).value = float(row.avg_borda_per_map)
+        ws.cell(r, 18).value = float(row.avg_borda_per_week)
+        ws.cell(r, 19).value = float(row.avg_pts_per_map)
+        ws.cell(r, 20).value = getattr(row, "best_week", "")
+        ws.cell(r, 21).value = float(getattr(row, "best_week_borda", 0) or 0)
+        ws.cell(r, 22).value = float(getattr(row, "best_week_pts", 0) or 0)
 
-        for c in range(1, 13):
+        for c in range(1, 23):
             align = LEFT if c == 2 else CENTER
             font = Font(color="000000", bold=True) if c in (3,) else FONT_BODY
             style_cell(ws, r, c, fill=fill, font=font, align=align)
+
+
+def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
+    ws = wb.create_sheet("Underligor")
+    merge_and_style(ws, 1, 1, 1, 6, "Underligor", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+
+    widths = {1: 4.5, 2: 22.0, 3: 12.0, 4: 10.0, 5: 8.0, 6: 8.0}
+    set_col_widths(ws, widths)
+
+    tables = compute_subleague_tables(df_overview)
+    row_cursor = 3
+
+    for league_name in ["Moving", "No move", "NMPZ", "Sverige"]:
+        merge_and_style(ws, row_cursor, 1, row_cursor, 6, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
+        row_cursor += 1
+
+        headers = ["#", "Spelare", "Poäng", "Total pts", "Kartor", "Veckor"]
+        for c, h in enumerate(headers, start=1):
+            ws.cell(row_cursor, c).value = h
+            style_cell(ws, row_cursor, c, fill=MID, font=FONT_HDR, align=CENTER)
+        row_cursor += 1
+
+        table = tables.get(league_name, pd.DataFrame())
+        for idx, row in enumerate(table.itertuples(index=False), start=1):
+            r = row_cursor + (idx - 1)
+            fill = ROW_A if (idx % 2 == 1) else ROW_B
+            ws.cell(r, 1).value = idx
+            ws.cell(r, 2).value = row.player
+            ws.cell(r, 3).value = float(row.league_points)
+            ws.cell(r, 4).value = int(row.total_pts)
+            ws.cell(r, 5).value = int(row.maps_counted)
+            ws.cell(r, 6).value = int(row.weeks_counted)
+
+            for c in range(1, 7):
+                align = LEFT if c == 2 else CENTER
+                font = Font(color="000000", bold=True) if c == 3 else FONT_BODY
+                style_cell(ws, r, c, fill=fill, font=font, align=align)
+
+        row_cursor += max(len(table), 1) + 1
+
+    ws.freeze_panes = "A4"
+
+
+def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None) -> None:
+    ws = wb.create_sheet("Information")
+
+    merge_and_style(ws, 1, 1, 2, 2, "Information", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+
+    rows = _normalize_information_rows(info_rows if info_rows is not None else default_information_rows())
+
+    set_col_widths(ws, {1: 4.5, 2: 185.0})
+    ws.row_dimensions[1].height = 40
+    ws.row_dimensions[2].height = 40
+
+    for i, text in enumerate(rows, start=0):
+        r = 3 + i
+        fill = ROW_A if (i % 2 == 0) else ROW_B
+        ws.cell(r, 1).value = "•"
+        ws.cell(r, 2).value = text
+        style_cell(ws, r, 1, fill=fill, font=FONT_BODY, align=CENTER)
+        style_cell(ws, r, 2, fill=fill, font=FONT_BODY, align=LEFT)
+        ws.row_dimensions[r].height = 34
 
 
 def write_raw_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
@@ -1092,6 +1441,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("[START] fetch_played_at:", bool(args.fetch_played_at))
     print("[START] tz:", args.tz)
 
+    if args.information_config.strip():
+        info_config_path = Path(args.information_config.strip()).expanduser()
+    else:
+        info_config_path = Path(DEFAULT_INFORMATION_CONFIG_NAME)
+    info_rows = load_information_rows(info_config_path, debug=args.debug)
+    print("[START] information_config:", info_config_path if info_config_path.exists() else "(default built-in)")
+
     session = make_session(ncfa)
 
     # collect deadlines (epoch)
@@ -1102,13 +1458,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Build all entries
     all_entries: List[Entry] = []
+    all_map_meta: List[dict] = []
     any_played_at = False
     successful_weeks: List[WeekSpec] = []
     failed_weeks: List[Tuple[str, str]] = []
 
     for w in weeks:
         try:
-            entries, has_any, failed_maps = build_week_entries(
+            entries, week_map_meta, has_any, failed_maps = build_week_entries(
                 session=session,
                 week=w,
                 tz_name=args.tz,
@@ -1120,6 +1477,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 fetch_played_at=bool(args.fetch_played_at and (w.deadline is not None)),
             )
             all_entries.extend(entries)
+            all_map_meta.extend(week_map_meta)
             any_played_at = any_played_at or has_any
             successful_weeks.append(w)
             print(f"[OK] built entries for {w.label}: {len(entries)} rows")
@@ -1139,7 +1497,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  - {label}: {err}")
 
     # Compute tables for ALL (unfiltered)
-    df_overview_all, df_weekly_all, df_meta_all = compute_week_tables(all_entries, tie_mode=args.tie)
+    df_overview_all, df_weekly_all, df_meta_all = compute_week_tables(all_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
     df_total_all, df_stats_all = compute_total_tables(df_overview_all)
 
     # Decide filtering
@@ -1159,7 +1517,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             keep_missing_time=bool(args.keep_missing_time),
             now_epoch=now_epoch,
         )
-        df_overview_f, df_weekly_f, df_meta_f = compute_week_tables(filtered_entries, tie_mode=args.tie)
+        df_overview_f, df_weekly_f, df_meta_f = compute_week_tables(filtered_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
         df_total_f, df_stats_f = compute_total_tables(df_overview_f)
         print(f"[FILTER] enabled. Filtered rows: {len(filtered_entries)} (from {len(all_entries)})")
     else:
@@ -1175,6 +1533,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     wb_all = Workbook()
     # remove default sheet
     wb_all.remove(wb_all.active)
+    write_information_sheet(wb_all, info_rows)
 
     week_labels = [w.label for w in successful_weeks]
 
@@ -1185,6 +1544,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels)
     write_stats_sheet(wb_all, df_stats_all)
+    write_underligor_sheet(wb_all, df_overview_all)
     write_raw_sheet(wb_all, df_overview_all)
 
     wb_all.save(out_all)
@@ -1195,6 +1555,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         out_f = Path(f"{args.out_base}_filtered.xlsx")
         wb_f = Workbook()
         wb_f.remove(wb_f.active)
+        write_information_sheet(wb_f, info_rows)
 
         for w in successful_weeks:
             dl_str = w.deadline or ""
@@ -1202,6 +1563,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels)
         write_stats_sheet(wb_f, df_stats_f)
+        write_underligor_sheet(wb_f, df_overview_f)
         write_raw_sheet(wb_f, df_overview_f)
 
         wb_f.save(out_f)

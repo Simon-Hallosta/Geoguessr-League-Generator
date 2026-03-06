@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -31,6 +32,7 @@ except Exception:
 TOKEN_RE = re.compile(r"/challenge/([A-Za-z0-9_-]+)")
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 EPOCH_RE = re.compile(r"^\d{10,13}$")
+SETTING_LABEL_RE = re.compile(r'game-settings-list_settingLabel[^"]*">(.*?)</div>', re.S)
 
 DEFAULT_TZ = "Europe/Stockholm"
 DEFAULT_INFORMATION_CONFIG_NAME = "information_config.json"
@@ -215,6 +217,15 @@ def http_get_json(session: requests.Session, url: str, timeout: float, debug: bo
     return r.json()
 
 
+def http_get_text(session: requests.Session, url: str, timeout: float, debug: bool) -> str:
+    r = session.get(url, timeout=timeout)
+    debug_print(debug, f"[HTTP] GET {url} -> {r.status_code} len={len(r.text)}")
+    if r.status_code >= 400:
+        snippet = r.text[:300].replace("\n", "\\n")
+        raise RuntimeError(f"HTTP {r.status_code} for {url}: {snippet}")
+    return r.text
+
+
 def _parse_int_maybe(x: Any) -> Optional[int]:
     if x is None or isinstance(x, bool):
         return None
@@ -227,6 +238,27 @@ def _parse_int_maybe(x: Any) -> Optional[int]:
         if s.isdigit():
             return int(s)
     return None
+
+
+def _parse_time_limit_seconds(label: str) -> Optional[int]:
+    txt = label.strip().lower()
+    if not txt:
+        return None
+    m = re.search(r"(\d+)\s*min", txt)
+    if m:
+        return int(m.group(1)) * 60
+    m = re.search(r"(\d+)\s*(?:s|sec|secs|second|seconds)\b", txt)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _clean_setting_label(raw: str) -> str:
+    txt = re.sub(r"<!--.*?-->", "", raw, flags=re.S)
+    txt = re.sub(r"<[^>]+>", "", txt)
+    txt = html.unescape(txt)
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
 
 
 def map_slot_key(map_index: Any) -> str:
@@ -553,6 +585,80 @@ def fetch_game_details_for_played_at(
     return None
 
 
+def fetch_challenge_landing_meta(
+    session: requests.Session,
+    challenge_token: str,
+    timeout: float,
+    debug: bool,
+) -> Tuple[str, str]:
+    """
+    Best-effort parse from challenge landing page HTML.
+    Useful when no highscores exist yet.
+    Returns: (map_name, rule_text)
+    """
+    url = f"https://www.geoguessr.com/challenge/{challenge_token}"
+    try:
+        html_txt = http_get_text(session, url, timeout=timeout, debug=debug)
+    except Exception as e:
+        debug_print(debug, f"[landing-meta] failed for {challenge_token}: {e}")
+        return "", ""
+
+    labels_raw = SETTING_LABEL_RE.findall(html_txt)
+    labels = [_clean_setting_label(x) for x in labels_raw if _clean_setting_label(x)]
+    if not labels:
+        return "", ""
+
+    map_name = labels[0] if len(labels) >= 1 else ""
+    time_label = labels[1] if len(labels) >= 2 else ""
+    labels_lc = [x.lower() for x in labels]
+
+    moving_allowed = any("moving allowed" in t for t in labels_lc)
+    moving_not_allowed = any("moving not allowed" in t for t in labels_lc)
+    panning_allowed = any("panning allowed" in t for t in labels_lc)
+    panning_not_allowed = any("panning not allowed" in t for t in labels_lc)
+    zooming_allowed = any("zooming allowed" in t for t in labels_lc)
+    zooming_not_allowed = any("zooming not allowed" in t for t in labels_lc)
+
+    mode = ""
+    if moving_not_allowed:
+        if panning_not_allowed and zooming_not_allowed:
+            mode = "NMPZ"
+        elif panning_not_allowed:
+            mode = "NMP"
+        else:
+            mode = "NM"
+    elif moving_allowed:
+        mode = "Moving"
+
+    secs = _parse_time_limit_seconds(time_label)
+    time_part = ""
+    if secs is not None:
+        if secs % 60 == 0:
+            time_part = f"{secs // 60} min"
+        else:
+            time_part = f"{secs}s"
+    elif time_label:
+        time_part = time_label
+
+    parts = [p for p in [mode, time_part] if p]
+    rule_text = " - ".join(parts)
+
+    # If flags were present but mode wasn't resolved, infer from negation labels.
+    if not rule_text and (panning_allowed or panning_not_allowed or zooming_allowed or zooming_not_allowed):
+        forbid_moving = moving_not_allowed
+        forbid_rotating = panning_not_allowed
+        forbid_zooming = zooming_not_allowed
+        pseudo_game = {
+            "forbidMoving": forbid_moving,
+            "forbidRotating": forbid_rotating,
+            "forbidZooming": forbid_zooming,
+            "timeLimit": secs,
+        }
+        rule_text = rule_text_from_game(pseudo_game)
+
+    return map_name, rule_text
+
+
 # ============================================================
 # Highscores fetch
 # ============================================================
@@ -668,6 +774,11 @@ def build_week_entries(
         except Exception as e:
             failed_maps_count += 1
             print(f"[WARN] {week.label} map {map_idx}: kunde inte hämta resultat för {url} ({e})")
+            landing_name, landing_rule = fetch_challenge_landing_meta(session, token, timeout=timeout, debug=debug)
+            if landing_name:
+                map_name = landing_name
+            if landing_rule:
+                rule_text = landing_rule
             map_meta_rows.append(
                 {
                     "week": week.label,
@@ -691,6 +802,12 @@ def build_week_entries(
                 rule_text = rule_text_from_game(game0)
             except Exception:
                 rule_text = ""
+        else:
+            landing_name, landing_rule = fetch_challenge_landing_meta(session, token, timeout=timeout, debug=debug)
+            if landing_name:
+                map_name = landing_name
+            if landing_rule:
+                rule_text = landing_rule
 
         map_meta_rows.append(
             {
@@ -1404,6 +1521,33 @@ def write_raw_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
         ws.column_dimensions[get_column_letter(c_idx)].width = min(max(len(str(h)) + 2, 10), 40)
 
 
+def _output_with_suffix(path: Path, index: int) -> Path:
+    if index <= 0:
+        return path
+    return path.with_name(f"{path.stem} ({index}){path.suffix}")
+
+
+def save_workbook_with_fallback(wb: Workbook, desired_path: Path, max_attempts: int = 50) -> Path:
+    """
+    Save workbook to desired_path, overwriting when possible.
+    If the target is locked (e.g. opened in Excel), fallback to suffixed names.
+    """
+    last_exc: Optional[Exception] = None
+    for n in range(0, max_attempts + 1):
+        candidate = _output_with_suffix(desired_path, n)
+        try:
+            wb.save(candidate)
+            if n > 0:
+                print(f"[WARN] output file locked: {desired_path.name}. Saved as {candidate.name}")
+            return candidate
+        except PermissionError as e:
+            last_exc = e
+            continue
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"Could not save workbook: {desired_path}")
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -1547,8 +1691,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     write_underligor_sheet(wb_all, df_overview_all)
     write_raw_sheet(wb_all, df_overview_all)
 
-    wb_all.save(out_all)
-    print("[DONE] wrote:", out_all)
+    actual_out_all = save_workbook_with_fallback(wb_all, out_all)
+    print("[DONE] wrote:", actual_out_all)
 
     # Write FILTERED workbook (if available)
     if can_filter and df_overview_f is not None and df_weekly_f is not None and df_meta_f is not None and df_total_f is not None and df_stats_f is not None:
@@ -1566,8 +1710,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         write_underligor_sheet(wb_f, df_overview_f)
         write_raw_sheet(wb_f, df_overview_f)
 
-        wb_f.save(out_f)
-        print("[DONE] wrote:", out_f)
+        actual_out_f = save_workbook_with_fallback(wb_f, out_f)
+        print("[DONE] wrote:", actual_out_f)
 
     return 0
 

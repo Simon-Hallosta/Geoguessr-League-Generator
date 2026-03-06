@@ -1054,6 +1054,14 @@ class LeagueDesktopApp:
         if out_base != requested_out_base:
             self.out_base_var.set(out_base)
             self.log(f"[INFO] Outputfil var låst/upptagen. Använder fallback-namn: {out_base}")
+            messagebox.showwarning(
+                "Outputfil låst",
+                (
+                    "En eller flera outputfiler är öppna/låsta och kunde inte skrivas över.\n"
+                    f"Sparar istället med suffix: {out_base}"
+                ),
+                parent=self.root,
+            )
 
         tz_name = self.tz_var.get().strip() or "Europe/Stockholm"
 

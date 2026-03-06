@@ -1468,7 +1468,7 @@ def write_visualizations_sheet(
         ws[f"A{i}"] = txt
         ws[f"A{i}"].font = Font(color="1B314B")
 
-    set_col_widths(ws, {1: 44.0, 2: 12.0, 13: 2.5, 14: 44.0})
+    set_col_widths(ws, {1: 58.0, 2: 14.0, 13: 4.0, 14: 58.0})
 
     if df_overview.empty or df_total.empty:
         ws["A16"] = "Ingen data tillgänglig för visualiseringar."
@@ -1527,6 +1527,20 @@ def write_visualizations_sheet(
             return set()
         return set(points_df.loc[mask, "player"].astype(str).tolist())
 
+    def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 6) -> None:
+        offsets = [(0, 0), (4, 2), (-4, 2), (4, -2), (-4, -2), (0, 4), (0, -4)]
+        for i, (xv, yv, label) in enumerate(zip(x_vals, y_vals, labels)):
+            dx, dy = offsets[i % len(offsets)]
+            ax.annotate(
+                str(label),
+                (float(xv), float(yv)),
+                textcoords="offset points",
+                xytext=(dx, dy),
+                fontsize=fontsize,
+                color="#1F2D3D",
+                bbox={"boxstyle": "round,pad=0.08", "fc": "white", "ec": "none", "alpha": 0.38},
+            )
+
     dfo = df_overview.copy()
     dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
     dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
@@ -1552,6 +1566,26 @@ def write_visualizations_sheet(
     maps_by_player = dfo.groupby("player")["week_map_key"].nunique()
     qualified_players = set(
         maps_by_player[maps_by_player >= min_maps_for_labels].index.astype(str).tolist()
+    )
+
+    week_participation = (
+        dfo.groupby(["player", "week"], as_index=False)
+        .agg(week_maps=("map_index", "nunique"))
+    )
+    expanded_rule = (
+        week_participation.groupby("player", as_index=False)
+        .agg(
+            weeks_played=("week", "nunique"),
+            max_week_maps=("week_maps", "max"),
+            total_maps_played=("week_maps", "sum"),
+        )
+    )
+    expanded_players = set(
+        expanded_rule[
+            (expanded_rule["max_week_maps"] >= 6)
+            & (expanded_rule["weeks_played"] >= 2)
+            & (expanded_rule["total_maps_played"] >= 7)
+        ]["player"].astype(str).tolist()
     )
 
     total_pts_series = (
@@ -1580,8 +1614,6 @@ def write_visualizations_sheet(
                     maps=("total_pts", "count"),
                 )
             )
-            outliers = _detect_outlier_players(by_player, "mean_time_min", "mean_pts")
-            label_players = (set(by_player["player"].astype(str).tolist()) & qualified_players) | outliers
 
             sizes = [22 + min(60.0, float(m) * 1.2) for m in by_player["maps"].tolist()]
             ax.scatter(
@@ -1594,10 +1626,13 @@ def write_visualizations_sheet(
                 linewidths=0.5,
                 label="Spelarmedel",
             )
-            for row in by_player.itertuples(index=False):
-                p = str(row.player)
-                if p in label_players:
-                    ax.annotate(p, (float(row.mean_time_min), float(row.mean_pts)), fontsize=7)
+            _annotate_all_points(
+                ax,
+                [float(x) for x in by_player["mean_time_min"].tolist()],
+                [float(x) for x in by_player["mean_pts"].tolist()],
+                [str(x) for x in by_player["player"].tolist()],
+                fontsize=6,
+            )
             ax.set_xlabel("Tid per karta (min)")
             ax.set_ylabel("GeoGuessr-poäng")
             ax.legend(loc="best", fontsize=7, frameon=True)
@@ -1606,11 +1641,19 @@ def write_visualizations_sheet(
         ax.set_title(f"{tag}: Tid vs poäng ({mode_name})")
         v1_paths.append(_save_fig(fig, f"{tag}_tid_vs_poang_{mode_name.lower().replace(' ', '_')}.png"))
 
-    # V2: Total rapoang topp 20
-    top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).head(20)
+    # V2: Total rapoang for spelare med "mer an en full vecka"
+    if expanded_players:
+        top_raw = (
+            df_total[df_total["player"].astype(str).isin(expanded_players)]
+            .sort_values(["total_pts", "total_borda"], ascending=[False, False])
+            .reset_index(drop=True)
+        )
+    else:
+        top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).reset_index(drop=True)
     v2_labels = [str(x) for x in top_raw["player"].tolist()]
     v2_values = [float(x) for x in pd.to_numeric(top_raw["total_pts"], errors="coerce").fillna(0).tolist()]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig_h = max(6.0, min(13.0, 1.2 + 0.24 * max(1, len(v2_labels))))
+    fig, ax = plt.subplots(figsize=(11.2, fig_h))
     if v2_values:
         labels_rev = list(reversed(v2_labels))
         vals_rev = list(reversed(v2_values))
@@ -1622,8 +1665,8 @@ def write_visualizations_sheet(
         ax.set_xlabel("GeoGuessr-poäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V2: Total råpoäng topp 20")
-    v2_path = _save_fig(fig, "V2_total_rapoang_topp20.png")
+    ax.set_title("V2: Total råpoäng (spelare med mer än en full vecka)")
+    v2_path = _save_fig(fig, "V2_total_rapoang_expanded.png")
 
     # V3: Snitt GeoGuessr-poang per karttyp och spelare (heatmap)
     mode_avg = (
@@ -1631,7 +1674,9 @@ def write_visualizations_sheet(
         .groupby(["player", "mode3"], as_index=False)
         .agg(avg_pts=("total_pts", "mean"))
     )
-    if qualified_players:
+    if expanded_players:
+        v3_players = sorted(expanded_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
+    elif qualified_players:
         v3_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
     else:
         v3_players = (
@@ -1639,7 +1684,7 @@ def write_visualizations_sheet(
             .agg(maps=("week_map_key", "nunique"))
             .sort_values("maps", ascending=False)["player"]
             .astype(str)
-            .head(30)
+            .head(40)
             .tolist()
         )
     v3_pivot = (
@@ -1651,7 +1696,8 @@ def write_visualizations_sheet(
         if col not in v3_pivot.columns:
             v3_pivot[col] = 0.0
     v3_pivot = v3_pivot[["Moving", "No move", "NMPZ"]]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig_h = max(6.0, min(13.0, 1.8 + 0.20 * max(1, len(v3_pivot.index))))
+    fig, ax = plt.subplots(figsize=(10.8, fig_h))
     if not v3_pivot.empty:
         im = ax.imshow(v3_pivot.values, aspect="auto", cmap="YlGnBu")
         ax.set_xticks([0, 1, 2])
@@ -1771,15 +1817,16 @@ def write_visualizations_sheet(
         )
     )
     stab["std_pts"] = pd.to_numeric(stab["std_pts"], errors="coerce").fillna(0.0)
-    outliers_v8 = _detect_outlier_players(stab, "std_pts", "mean_pts")
-    label_players_v8 = (set(stab["player"].astype(str).tolist()) & qualified_players) | outliers_v8
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig, ax = plt.subplots(figsize=(11.0, 6.6))
     if not stab.empty:
         ax.scatter(stab["std_pts"].tolist(), stab["mean_pts"].tolist(), color="#2A77D4", alpha=0.6, s=30)
-        for row in stab.itertuples(index=False):
-            p = str(row.player)
-            if p in label_players_v8:
-                ax.annotate(p, (float(row.std_pts), float(row.mean_pts)), fontsize=7)
+        _annotate_all_points(
+            ax,
+            [float(x) for x in stab["std_pts"].tolist()],
+            [float(x) for x in stab["mean_pts"].tolist()],
+            [str(x) for x in stab["player"].tolist()],
+            fontsize=6,
+        )
         ax.set_xlabel("Standardavvikelse i poäng")
         ax.set_ylabel("Snitt GeoGuessr-poäng")
     else:
@@ -1792,20 +1839,24 @@ def write_visualizations_sheet(
         dfo.groupby(["player", "week"], as_index=False)
         .agg(avg_pts=("total_pts", "mean"))
     )
-    if qualified_players:
+    if expanded_players:
+        v9_players = sorted(expanded_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
+    elif qualified_players:
         v9_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
     else:
         v9_players = (
             dfo.groupby("player", as_index=False)
             .agg(maps=("week_map_key", "nunique"))
             .sort_values("maps", ascending=False)["player"]
-            .astype(str).head(30).tolist()
+            .astype(str).head(40).tolist()
         )
     v9_pivot = (
         week_player.pivot_table(index="player", columns="week", values="avg_pts", aggfunc="mean")
         .reindex(index=v9_players, columns=weeks_order)
     )
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig_h = max(6.0, min(14.0, 1.8 + 0.18 * max(1, len(v9_players))))
+    fig_w = max(10.6, 7.4 + 0.9 * max(1, len(weeks_order)))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     if not v9_pivot.empty:
         centered = v9_pivot.sub(v9_pivot.mean(axis=1), axis=0).fillna(0.0)
         im = ax.imshow(centered.values, aspect="auto", cmap="RdYlGn")
@@ -1833,14 +1884,17 @@ def write_visualizations_sheet(
     feat_df = pd.DataFrame(feat_rows)
     feature_cols = ["avg_pts_Moving", "avg_pts_No move", "avg_pts_NMPZ", "avg_pts_Sverige", "avg_time_min", "std_pts"]
 
-    fig = plt.figure(figsize=(10.2, 5.2))
+    fig = plt.figure(figsize=(12.6, 7.1))
     gs = fig.add_gridspec(2, 2, width_ratios=[2.1, 1.0], wspace=0.34, hspace=0.34)
     ax_sc = fig.add_subplot(gs[:, 0])
     ax_l1 = fig.add_subplot(gs[0, 1])
     ax_l2 = fig.add_subplot(gs[1, 1])
 
     if not feat_df.empty and len(feat_df) >= 3:
-        feat_df = feat_df[feat_df["maps"] >= min_maps_for_labels].copy()
+        if expanded_players:
+            feat_df = feat_df[feat_df["player"].astype(str).isin(expanded_players)].copy()
+        elif qualified_players:
+            feat_df = feat_df[feat_df["player"].astype(str).isin(qualified_players)].copy()
         if feat_df.empty:
             feat_df = pd.DataFrame(feat_rows)
         x_mat = feat_df[feature_cols].to_numpy(dtype=float)
@@ -1863,12 +1917,13 @@ def write_visualizations_sheet(
         sc = ax_sc.scatter(feat_df["pc1"], feat_df["pc2"], c=colors, cmap="viridis", s=50, alpha=0.85)
         fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label="Total råpoäng")
 
-        outliers_pc = _detect_outlier_players(feat_df, "pc1", "pc2")
-        label_pc = (set(feat_df["player"].astype(str).tolist()) & qualified_players) | outliers_pc
-        for row in feat_df.itertuples(index=False):
-            p = str(row.player)
-            if p in label_pc:
-                ax_sc.annotate(p, (float(row.pc1), float(row.pc2)), fontsize=7)
+        _annotate_all_points(
+            ax_sc,
+            [float(x) for x in feat_df["pc1"].tolist()],
+            [float(x) for x in feat_df["pc2"].tolist()],
+            [str(x) for x in feat_df["player"].tolist()],
+            fontsize=6,
+        )
         ax_sc.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
         ax_sc.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
         ax_sc.set_title("Spelare i PCA-rum")
@@ -1905,14 +1960,16 @@ def write_visualizations_sheet(
         .agg(std_pts=("total_pts", "std"))
     )
     std_by_mode["std_pts"] = pd.to_numeric(std_by_mode["std_pts"], errors="coerce").fillna(0.0)
-    if qualified_players:
+    if expanded_players:
+        v11_players = sorted(expanded_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
+    elif qualified_players:
         v11_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
     else:
         v11_players = (
             dfo.groupby("player", as_index=False)
             .agg(maps=("week_map_key", "nunique"))
             .sort_values("maps", ascending=False)["player"]
-            .astype(str).head(30).tolist()
+            .astype(str).head(40).tolist()
         )
     v11_pivot = (
         std_by_mode.pivot_table(index="player", columns="mode3", values="std_pts", aggfunc="mean")
@@ -1923,7 +1980,8 @@ def write_visualizations_sheet(
         if col not in v11_pivot.columns:
             v11_pivot[col] = 0.0
     v11_pivot = v11_pivot[["Moving", "No move", "NMPZ"]]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    fig_h = max(6.0, min(13.0, 1.8 + 0.19 * max(1, len(v11_players))))
+    fig, ax = plt.subplots(figsize=(10.8, fig_h))
     if not v11_pivot.empty:
         im = ax.imshow(v11_pivot.values, aspect="auto", cmap="OrRd")
         ax.set_xticks([0, 1, 2])
@@ -1936,40 +1994,43 @@ def write_visualizations_sheet(
     ax.set_title("V11: Standardavvikelse per karttyp och spelare")
     v11_path = _save_fig(fig, "V11_std_per_karttyp_spelare.png")
 
-    # Place images lower so top text never gets covered.
+    # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
-    first_row = 20
-    row_step = 19
+    first_row = 24
+    row_step = 31
     for i in range(7):
         r = first_row + i * row_step
         anchors.append(f"A{r}")
         anchors.append(f"N{r}")
 
-    image_paths: List[Path] = [
-        v1_paths[0],
-        v1_paths[1],
-        v1_paths[2],
-        v2_path,
-        v3_path,
-        v4_path,
-        v5_path,
-        v6_path,
-        v7_path,
-        v8_path,
-        v9_path,
-        v10_path,
-        v11_path,
+    image_specs: List[Tuple[Path, int, int]] = [
+        (v1_paths[0], 760, 430),
+        (v1_paths[1], 760, 430),
+        (v1_paths[2], 760, 430),
+        (v2_path, 760, 520),
+        (v3_path, 760, 520),
+        (v4_path, 760, 430),
+        (v5_path, 760, 430),
+        (v6_path, 760, 430),
+        (v7_path, 760, 430),
+        (v8_path, 760, 430),
+        (v9_path, 760, 520),
+        (v10_path, 760, 500),
+        (v11_path, 760, 520),
     ]
 
-    for idx, img_path in enumerate(image_paths):
+    for idx, (img_path, w, h) in enumerate(image_specs):
         if idx >= len(anchors):
             break
-        _insert_image(img_path, anchors[idx], width=620, height=320)
+        _insert_image(img_path, anchors[idx], width=w, height=h)
 
     info_row = first_row + 7 * row_step + 3
     ws[f"A{info_row}"] = f"Bilder sparade i: {image_dir}"
     ws[f"A{info_row}"].font = Font(color="4F4F4F", italic=True)
-    ws[f"A{info_row+1}"] = f"Namn i scatter: spelare med minst {min_maps_for_labels}/{total_maps} kartor (>=75%) samt outliers."
+    ws[f"A{info_row+1}"] = (
+        "Namn i scatter: alla spelare visas. "
+        f"Utökad urvalsregel i V2/V9/V11: full vecka + extra spel (>=7 kartor över minst 2 veckor)."
+    )
     ws[f"A{info_row+1}"].font = Font(color="4F4F4F", italic=True)
 
 

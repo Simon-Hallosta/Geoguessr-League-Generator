@@ -83,6 +83,9 @@ MID = PatternFill("solid", fgColor="3A3A3A")
 ROW_A = PatternFill("solid", fgColor="D9EAD3")
 ROW_B = PatternFill("solid", fgColor="C9E2BC")
 WHITE = PatternFill("solid", fgColor="FFFFFF")
+MEDAL_GOLD = PatternFill("solid", fgColor="FFD966")
+MEDAL_SILVER = PatternFill("solid", fgColor="D9D9D9")
+MEDAL_BRONZE = PatternFill("solid", fgColor="F4B183")
 
 FONT_HDR = Font(color="FFFFFF", bold=True)
 FONT_HDR_BIG = Font(color="FFFFFF", bold=True, size=16)
@@ -1203,6 +1206,16 @@ def merge_and_style(ws, r1: int, c1: int, r2: int, c2: int, value: str, *, fill,
             ws.cell(r, c).fill = fill
 
 
+def rank_row_fill(rank: int, fallback_fill: PatternFill) -> PatternFill:
+    if rank == 1:
+        return MEDAL_GOLD
+    if rank == 2:
+        return MEDAL_SILVER
+    if rank == 3:
+        return MEDAL_BRONZE
+    return fallback_fill
+
+
 def write_week_sheet(
     wb: Workbook,
     week_label: str,
@@ -1292,7 +1305,8 @@ def write_week_sheet(
 
     for idx, player in enumerate(ordered, start=1):
         r = r_data_start + (idx - 1)
-        fill = ROW_A if (idx % 2 == 1) else ROW_B
+        base_fill = ROW_A if (idx % 2 == 1) else ROW_B
+        fill = rank_row_fill(idx, base_fill)
 
         ws.cell(r, col_rank).value = idx
         ws.cell(r, col_player).value = player
@@ -1342,7 +1356,8 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
 
     for idx, row in enumerate(df_total.itertuples(index=False), start=1):
         r = 2 + idx
-        fill = ROW_A if (idx % 2 == 1) else ROW_B
+        base_fill = ROW_A if (idx % 2 == 1) else ROW_B
+        fill = rank_row_fill(idx, base_fill)
 
         ws.cell(r, 1).value = idx
         ws.cell(r, 2).value = row.player
@@ -1406,7 +1421,8 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
 
     for idx, row in enumerate(df_stats.itertuples(index=False), start=1):
         r = 2 + idx
-        fill = ROW_A if (idx % 2 == 1) else ROW_B
+        base_fill = ROW_A if (idx % 2 == 1) else ROW_B
+        fill = rank_row_fill(idx, base_fill)
 
         ws.cell(r, 1).value = idx
         ws.cell(r, 2).value = row.player
@@ -2071,7 +2087,8 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
         table = tables.get(league_name, pd.DataFrame())
         for idx, row in enumerate(table.itertuples(index=False), start=1):
             r = data_start_row + (idx - 1)
-            fill = ROW_A if (idx % 2 == 1) else ROW_B
+            base_fill = ROW_A if (idx % 2 == 1) else ROW_B
+            fill = rank_row_fill(idx, base_fill)
             ws.cell(r, start_col + 0).value = idx
             ws.cell(r, start_col + 1).value = row.player
             ws.cell(r, start_col + 2).value = float(row.league_points)

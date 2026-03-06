@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -16,7 +17,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import requests
 from openpyxl import Workbook
-from openpyxl.chart import AreaChart, BarChart, LineChart, PieChart, RadarChart, Reference, ScatterChart, Series
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -1436,7 +1437,13 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
             style_cell(ws, r, c, fill=fill, font=font, align=align)
 
 
-def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total: pd.DataFrame, weeks: List[str]) -> None:
+def write_visualizations_sheet(
+    wb: Workbook,
+    df_overview: pd.DataFrame,
+    df_total: pd.DataFrame,
+    weeks: List[str],
+    image_dir: Optional[Path] = None,
+) -> None:
     ws = wb.create_sheet("Visualiseringar")
     merge_and_style(ws, 1, 1, 1, 24, "Visualiseringar (Experiment)", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
@@ -1460,74 +1467,98 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
 
     set_col_widths(ws, {1: 44.0, 2: 12.0, 13: 2.5, 14: 44.0})
 
-    # Keep chart data out of sight in hidden far-right columns.
-    data_col_start = 40
-    for c in range(data_col_start, data_col_start + 80):
-        ws.column_dimensions[get_column_letter(c)].hidden = True
-
-    data_row_cursor = 1
-
-    def _write_table(headers: List[str], rows: List[List[Any]]) -> Tuple[int, int, int]:
-        nonlocal data_row_cursor
-        start_row = data_row_cursor
-        n_cols = len(headers)
-        for j, h in enumerate(headers):
-            ws.cell(start_row, data_col_start + j).value = h
-
-        if not rows:
-            rows = [["Ingen data"] + [0 for _ in range(max(n_cols - 1, 0))]]
-
-        for i, row_vals in enumerate(rows, start=start_row + 1):
-            for j, val in enumerate(row_vals):
-                ws.cell(i, data_col_start + j).value = val
-
-        end_row = start_row + len(rows)
-        data_row_cursor = end_row + 3
-        return start_row, end_row, n_cols
-
-    def _apply_chart_common(chart, anchor: str, title: str) -> None:
-        chart.title = title
-        chart.width = 10.8
-        chart.height = 6.6
-        # Data tables are placed in hidden columns; ensure charts still plot hidden cells.
-        chart.plot_visible_only = False
-        ws.add_chart(chart, anchor)
-
     if df_overview.empty or df_total.empty:
         ws["A16"] = "Ingen data tillgänglig för visualiseringar."
         ws["A16"].font = Font(color="AA0000", bold=True)
         return
 
+    if image_dir is None:
+        image_dir = Path("visualizations") / "latest"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    for old_png in image_dir.glob("V*.png"):
+        try:
+            old_png.unlink()
+        except Exception:
+            pass
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as ex:
+        ws["A16"] = f"Kunde inte skapa visualiseringsbilder (matplotlib saknas): {ex}"
+        ws["A16"].font = Font(color="AA0000", bold=True)
+        return
+
+    def _empty_plot(ax, text: str = "Ingen data") -> None:
+        ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    def _save_fig(fig, filename: str) -> Path:
+        fig.tight_layout()
+        out_path = image_dir / filename
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return out_path
+
+    def _insert_image(path: Path, anchor: str) -> None:
+        img = XLImage(str(path))
+        img.width = 620
+        img.height = 340
+        ws.add_image(img, anchor)
+
+    def _safe_col_sum(col: str) -> float:
+        if col not in df_total.columns:
+            return 0.0
+        return float(pd.to_numeric(df_total[col], errors="coerce").fillna(0).sum())
+
+    def _safe_col_mean(col: str) -> float:
+        if col not in df_total.columns:
+            return 0.0
+        series = pd.to_numeric(df_total[col], errors="coerce").fillna(0.0)
+        return float(series.mean()) if not series.empty else 0.0
+
     dfo = df_overview.copy()
     dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
     dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
 
-    # V1
+    weeks_seen = dfo["week"].dropna().astype(str).tolist()
+    weeks_order = list(dict.fromkeys(list(weeks) + weeks_seen))
+
+    # V1: Totalpoang topp 10
     top_total = df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False]).head(10)
-    v1_rows = [[row.player, float(row.total_borda)] for row in top_total.itertuples(index=False)]
-    t1 = _write_table(["Spelare", "Poäng"], v1_rows)
-    ch1 = BarChart()
-    ch1.y_axis.title = "Poäng"
-    ch1.x_axis.title = "Spelare"
-    ch1.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t1[0], max_row=t1[1]), titles_from_data=True)
-    ch1.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t1[0] + 1, max_row=t1[1]))
-    _apply_chart_common(ch1, "A8", "V1: Totalpoäng topp 10")
+    v1_labels = [str(x) for x in top_total["player"].tolist()]
+    v1_values = [float(x) for x in pd.to_numeric(top_total["total_borda"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v1_values:
+        xs = list(range(len(v1_labels)))
+        ax.bar(xs, v1_values, color="#2A77D4")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v1_labels, rotation=30, ha="right")
+        ax.set_ylabel("Poang")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V1: Totalpoang topp 10")
+    v1_path = _save_fig(fig, "V1_totalpoang_topp10.png")
 
-    # V2
+    # V2: Total rapoang topp 10
     top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).head(10)
-    v2_rows = [[row.player, float(row.total_pts)] for row in top_raw.itertuples(index=False)]
-    t2 = _write_table(["Spelare", "Total pts"], v2_rows)
-    ch2 = BarChart()
-    ch2.y_axis.title = "Total pts"
-    ch2.x_axis.title = "Spelare"
-    ch2.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t2[0], max_row=t2[1]), titles_from_data=True)
-    ch2.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t2[0] + 1, max_row=t2[1]))
-    _apply_chart_common(ch2, "N8", "V2: Total råpoäng topp 10")
+    v2_labels = [str(x) for x in top_raw["player"].tolist()]
+    v2_values = [float(x) for x in pd.to_numeric(top_raw["total_pts"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v2_values:
+        xs = list(range(len(v2_labels)))
+        ax.bar(xs, v2_values, color="#279B70")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v2_labels, rotation=30, ha="right")
+        ax.set_ylabel("Total pts")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V2: Total rapoang topp 10")
+    v2_path = _save_fig(fig, "V2_total_rapoang_topp10.png")
 
-    weeks_seen = dfo["week"].dropna().astype(str).unique().tolist()
-    weeks_order = list(weeks) + [w for w in weeks_seen if w not in weeks]
-
-    # V3
+    # V3: Snitt liga-poang per vecka
     per_week_borda = (
         dfo.groupby("week", as_index=False)
         .agg(avg_borda=("borda_points", "mean"))
@@ -1535,16 +1566,21 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
         .reindex(weeks_order, fill_value=0.0)
         .reset_index()
     )
-    v3_rows = [[str(r.week), float(r.avg_borda)] for r in per_week_borda.itertuples(index=False)]
-    t3 = _write_table(["Vecka", "Snitt poäng"], v3_rows)
-    ch3 = LineChart()
-    ch3.y_axis.title = "Snitt poäng"
-    ch3.x_axis.title = "Vecka"
-    ch3.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t3[0], max_row=t3[1]), titles_from_data=True)
-    ch3.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t3[0] + 1, max_row=t3[1]))
-    _apply_chart_common(ch3, "A27", "V3: Snitt liga-poäng per vecka")
+    v3_labels = [str(x) for x in per_week_borda["week"].tolist()]
+    v3_values = [float(x) for x in pd.to_numeric(per_week_borda["avg_borda"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v3_values:
+        xs = list(range(len(v3_values)))
+        ax.plot(xs, v3_values, marker="o", color="#2A77D4")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v3_labels, rotation=30, ha="right")
+        ax.set_ylabel("Snitt poang")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V3: Snitt liga-poang per vecka")
+    v3_path = _save_fig(fig, "V3_snitt_ligapoang_vecka.png")
 
-    # V4
+    # V4: Aktiva spelare per vecka
     per_week_players = (
         dfo.groupby("week", as_index=False)
         .agg(active_players=("player", "nunique"))
@@ -1552,16 +1588,21 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
         .reindex(weeks_order, fill_value=0.0)
         .reset_index()
     )
-    v4_rows = [[str(r.week), float(r.active_players)] for r in per_week_players.itertuples(index=False)]
-    t4 = _write_table(["Vecka", "Aktiva spelare"], v4_rows)
-    ch4 = LineChart()
-    ch4.y_axis.title = "Spelare"
-    ch4.x_axis.title = "Vecka"
-    ch4.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t4[0], max_row=t4[1]), titles_from_data=True)
-    ch4.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t4[0] + 1, max_row=t4[1]))
-    _apply_chart_common(ch4, "N27", "V4: Aktiva spelare per vecka")
+    v4_labels = [str(x) for x in per_week_players["week"].tolist()]
+    v4_values = [float(x) for x in pd.to_numeric(per_week_players["active_players"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v4_values:
+        xs = list(range(len(v4_values)))
+        ax.plot(xs, v4_values, marker="o", color="#E0862B")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v4_labels, rotation=30, ha="right")
+        ax.set_ylabel("Spelare")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V4: Aktiva spelare per vecka")
+    v4_path = _save_fig(fig, "V4_aktiva_spelare_vecka.png")
 
-    # V5
+    # V5: Snitt liga-poang per kartslot
     slot_order = [map_slot_label(k) for k in SLOT_KEYS_ORDER]
     per_slot = (
         dfo.groupby("slot_label", as_index=False)
@@ -1570,29 +1611,41 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
         .reindex(slot_order, fill_value=0.0)
         .reset_index()
     )
-    v5_rows = [[str(r.slot_label), float(r.avg_borda)] for r in per_slot.itertuples(index=False)]
-    t5 = _write_table(["Kartslot", "Snitt poäng"], v5_rows)
-    ch5 = BarChart()
-    ch5.y_axis.title = "Snitt poäng"
-    ch5.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t5[0], max_row=t5[1]), titles_from_data=True)
-    ch5.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t5[0] + 1, max_row=t5[1]))
-    _apply_chart_common(ch5, "A46", "V5: Snitt liga-poäng per kartslot")
+    v5_labels = [str(x) for x in per_slot["slot_label"].tolist()]
+    v5_values = [float(x) for x in pd.to_numeric(per_slot["avg_borda"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v5_values:
+        xs = list(range(len(v5_values)))
+        ax.bar(xs, v5_values, color="#7A67D8")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v5_labels, rotation=25, ha="right")
+        ax.set_ylabel("Snitt poang")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V5: Snitt liga-poang per kartslot")
+    v5_path = _save_fig(fig, "V5_snitt_ligapoang_kartslot.png")
 
-    # V6
-    category_totals = [
-        ["Moving", float(df_total["cat_moving"].sum())],
-        ["No move", float(df_total["cat_no_move"].sum())],
-        ["NMPZ", float(df_total["cat_nmpz"].sum())],
-        ["Sverige", float(df_total["cat_sverige"].sum())],
+    # V6: Total liga-poang per kategori
+    v6_labels = ["Moving", "No move", "NMPZ", "Sverige"]
+    v6_values = [
+        _safe_col_sum("cat_moving"),
+        _safe_col_sum("cat_no_move"),
+        _safe_col_sum("cat_nmpz"),
+        _safe_col_sum("cat_sverige"),
     ]
-    t6 = _write_table(["Kategori", "Total poäng"], category_totals)
-    ch6 = BarChart()
-    ch6.y_axis.title = "Total poäng"
-    ch6.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t6[0], max_row=t6[1]), titles_from_data=True)
-    ch6.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t6[0] + 1, max_row=t6[1]))
-    _apply_chart_common(ch6, "N46", "V6: Total liga-poäng per kategori")
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if any(v6_values):
+        xs = list(range(len(v6_values)))
+        ax.bar(xs, v6_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B"])
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v6_labels)
+        ax.set_ylabel("Total poang")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V6: Total liga-poang per kategori")
+    v6_path = _save_fig(fig, "V6_total_ligapoang_kategori.png")
 
-    # V7
+    # V7: Snitt rapoang per vecka
     per_week_raw = (
         dfo.groupby("week", as_index=False)
         .agg(avg_raw_pts=("total_pts", "mean"))
@@ -1600,52 +1653,90 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
         .reindex(weeks_order, fill_value=0.0)
         .reset_index()
     )
-    v7_rows = [[str(r.week), float(r.avg_raw_pts)] for r in per_week_raw.itertuples(index=False)]
-    t7 = _write_table(["Vecka", "Snitt råpoäng"], v7_rows)
-    ch7 = AreaChart()
-    ch7.y_axis.title = "Snitt råpoäng"
-    ch7.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t7[0], max_row=t7[1]), titles_from_data=True)
-    ch7.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t7[0] + 1, max_row=t7[1]))
-    _apply_chart_common(ch7, "A65", "V7: Snitt råpoäng per vecka")
+    v7_labels = [str(x) for x in per_week_raw["week"].tolist()]
+    v7_values = [float(x) for x in pd.to_numeric(per_week_raw["avg_raw_pts"], errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v7_values:
+        xs = list(range(len(v7_values)))
+        ax.plot(xs, v7_values, color="#279B70")
+        ax.fill_between(xs, v7_values, color="#9DD8BE", alpha=0.55)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(v7_labels, rotation=30, ha="right")
+        ax.set_ylabel("Snitt rapoang")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V7: Snitt rapoang per vecka")
+    v7_path = _save_fig(fig, "V7_snitt_rapoang_vecka.png")
 
-    # V8
+    # V8: Poangandel topp 8
     top_share = df_total.sort_values("total_borda", ascending=False).head(8)[["player", "total_borda"]].copy()
-    others = float(df_total["total_borda"].sum() - top_share["total_borda"].sum())
-    v8_rows = [[str(r.player), float(r.total_borda)] for r in top_share.itertuples(index=False)]
+    share_labels = [str(x) for x in top_share["player"].tolist()]
+    share_values = [float(x) for x in pd.to_numeric(top_share["total_borda"], errors="coerce").fillna(0).tolist()]
+    others = max(0.0, _safe_col_sum("total_borda") - sum(share_values))
     if others > 0:
-        v8_rows.append(["Övriga", others])
-    t8 = _write_table(["Spelare", "Poängandel"], v8_rows)
-    ch8 = PieChart()
-    ch8.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t8[0], max_row=t8[1]), titles_from_data=True)
-    ch8.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t8[0] + 1, max_row=t8[1]))
-    _apply_chart_common(ch8, "N65", "V8: Poängandel topp 8")
+        share_labels.append("Ovriga")
+        share_values.append(others)
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if share_values and sum(share_values) > 0:
+        ax.pie(share_values, labels=share_labels, autopct="%1.1f%%", startangle=140)
+        ax.axis("equal")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V8: Poangandel topp 8")
+    v8_path = _save_fig(fig, "V8_poangandel_topp8.png")
 
-    # V9
-    scatter_rows = [[float(r.maps_counted), float(r.avg_pts_per_map)] for r in df_total.itertuples(index=False)]
-    t9 = _write_table(["Kartor", "Snitt pts/karta"], scatter_rows)
-    ch9 = ScatterChart()
-    ch9.x_axis.title = "Kartor spelade"
-    ch9.y_axis.title = "Snitt pts/karta"
-    x_vals = Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t9[0] + 1, max_row=t9[1])
-    y_vals = Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t9[0] + 1, max_row=t9[1])
-    s9 = Series(y_vals, x_vals, title="Spelare")
-    ch9.series.append(s9)
-    _apply_chart_common(ch9, "A84", "V9: Erfarenhet vs snittpoäng")
+    # V9: Erfarenhet vs snittpoang
+    v9_x = [float(x) for x in pd.to_numeric(df_total.get("maps_counted", pd.Series(dtype=float)), errors="coerce").fillna(0).tolist()]
+    v9_y = [float(x) for x in pd.to_numeric(df_total.get("avg_pts_per_map", pd.Series(dtype=float)), errors="coerce").fillna(0).tolist()]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if v9_x and v9_y:
+        ax.scatter(v9_x, v9_y, color="#7A67D8", alpha=0.8)
+        ax.set_xlabel("Kartor spelade")
+        ax.set_ylabel("Snitt pts/karta")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V9: Erfarenhet vs snittpoang")
+    v9_path = _save_fig(fig, "V9_erfarenhet_vs_snittpoang.png")
 
-    # V10
-    category_avg = [
-        ["Moving", float(df_total["cat_moving"].mean())],
-        ["No move", float(df_total["cat_no_move"].mean())],
-        ["NMPZ", float(df_total["cat_nmpz"].mean())],
-        ["Sverige", float(df_total["cat_sverige"].mean())],
+    # V10: Snitt liga-poang per kategori (radar)
+    v10_labels = ["Moving", "No move", "NMPZ", "Sverige"]
+    v10_values = [
+        _safe_col_mean("cat_moving"),
+        _safe_col_mean("cat_no_move"),
+        _safe_col_mean("cat_nmpz"),
+        _safe_col_mean("cat_sverige"),
     ]
-    t10 = _write_table(["Kategori", "Snitt poäng"], category_avg)
-    ch10 = RadarChart()
-    ch10.style = 10
-    ch10.y_axis.title = "Snitt poäng"
-    ch10.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t10[0], max_row=t10[1]), titles_from_data=True)
-    ch10.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t10[0] + 1, max_row=t10[1]))
-    _apply_chart_common(ch10, "N84", "V10: Snitt liga-poäng per kategori")
+    fig, ax = plt.subplots(figsize=(8.6, 4.8), subplot_kw={"projection": "polar"})
+    if any(v10_values):
+        angles = [n / float(len(v10_labels)) * 2 * math.pi for n in range(len(v10_labels))]
+        angles += angles[:1]
+        radar_vals = v10_values + v10_values[:1]
+        ax.plot(angles, radar_vals, color="#2A77D4", linewidth=2)
+        ax.fill(angles, radar_vals, color="#8CB8EE", alpha=0.35)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(v10_labels)
+    else:
+        _empty_plot(ax)
+    ax.set_title("V10: Snitt liga-poang per kategori")
+    v10_path = _save_fig(fig, "V10_snitt_ligapoang_kategori_radar.png")
+
+    image_slots = [
+        (v1_path, "A8"),
+        (v2_path, "N8"),
+        (v3_path, "A27"),
+        (v4_path, "N27"),
+        (v5_path, "A46"),
+        (v6_path, "N46"),
+        (v7_path, "A65"),
+        (v8_path, "N65"),
+        (v9_path, "A84"),
+        (v10_path, "N84"),
+    ]
+    for img_path, anchor in image_slots:
+        _insert_image(img_path, anchor)
+
+    ws["A106"] = f"Bilder sparade i: {image_dir}"
+    ws["A106"].font = Font(color="4F4F4F", italic=True)
 
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
@@ -1915,8 +2006,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels)
     write_stats_sheet(wb_all, df_stats_all)
-    write_visualizations_sheet(wb_all, df_overview_all, df_total_all, week_labels)
     write_underligor_sheet(wb_all, df_overview_all)
+    write_visualizations_sheet(
+        wb_all,
+        df_overview_all,
+        df_total_all,
+        week_labels,
+        image_dir=out_all.parent / "visualizations" / out_all.stem,
+    )
     write_raw_sheet(wb_all, df_overview_all)
 
     actual_out_all = save_workbook_with_fallback(wb_all, out_all)
@@ -1935,8 +2032,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels)
         write_stats_sheet(wb_f, df_stats_f)
-        write_visualizations_sheet(wb_f, df_overview_f, df_total_f, week_labels)
         write_underligor_sheet(wb_f, df_overview_f)
+        write_visualizations_sheet(
+            wb_f,
+            df_overview_f,
+            df_total_f,
+            week_labels,
+            image_dir=out_f.parent / "visualizations" / out_f.stem,
+        )
         write_raw_sheet(wb_f, df_overview_f)
 
         actual_out_f = save_workbook_with_fallback(wb_f, out_f)

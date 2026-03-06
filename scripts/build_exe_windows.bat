@@ -37,7 +37,6 @@ if exist "dist\GeoLeagueBuilder.exe" (
   --workpath "%WORKPATH%" ^
   --icon "desktop_app\assets\geoleague.ico" ^
   --name "!EXE_NAME!" ^
-  --exclude-module matplotlib ^
   --exclude-module scipy ^
   --exclude-module PyQt5 ^
   --exclude-module PySide6 ^

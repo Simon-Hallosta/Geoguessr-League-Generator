@@ -65,6 +65,10 @@ Windows fallback (om ni vill starta Python-varianten):
 
 `desktop_app/start_gui_windows.bat`
 
+Bygg/rebuild av `.exe` (standardflöde):
+
+`scripts\build_exe_windows.bat`
+
 Screenshot:
 
 ![Desktop App UI](img/desktop_app_UI.jpg)

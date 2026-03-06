@@ -57,8 +57,15 @@ Appen sparar state i:
 Om ni vill dela appen som en ren Windows-app:
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --icon desktop_app/assets/geoleague.ico --name GeoGuessrLeagueApp desktop_app/app.py
+scripts\build_exe_windows.bat
 ```
 
 Den färdiga `.exe` hamnar i `dist/`.
+
+Scriptet använder:
+
+- `.venv-win\Scripts\python.exe`
+- PyInstaller med `--onefile --windowed`
+- ikon `desktop_app\assets\geoleague.ico`
+- temporär workpath i `%LOCALAPPDATA%\Temp\GeoLeagueBuilder_build` (undviker låsproblem i `build/`)
+- om `dist\GeoLeagueBuilder.exe` är låst skapas automatiskt `GeoLeagueBuilder_1.exe`, `GeoLeagueBuilder_2.exe`, osv.

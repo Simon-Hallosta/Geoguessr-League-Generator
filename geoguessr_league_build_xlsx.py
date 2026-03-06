@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import requests
 from openpyxl import Workbook
+from openpyxl.chart import AreaChart, BarChart, LineChart, PieChart, RadarChart, Reference, ScatterChart, Series
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -1435,6 +1436,216 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
             style_cell(ws, r, c, fill=fill, font=font, align=align)
 
 
+def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total: pd.DataFrame, weeks: List[str]) -> None:
+    ws = wb.create_sheet("Visualiseringar")
+    merge_and_style(ws, 1, 1, 1, 24, "Visualiseringar (Experiment)", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+
+    viz_names = [
+        "V1: Totalpoäng topp 10",
+        "V2: Total råpoäng topp 10",
+        "V3: Snitt liga-poäng per vecka",
+        "V4: Aktiva spelare per vecka",
+        "V5: Snitt liga-poäng per kartslot",
+        "V6: Total liga-poäng per kategori",
+        "V7: Snitt råpoäng per vecka",
+        "V8: Poängandel topp 8",
+        "V9: Erfarenhet vs snittpoäng (scatter)",
+        "V10: Snitt liga-poäng per kategori (radar)",
+    ]
+    ws["A3"] = "Diagramöversikt:"
+    ws["A3"].font = Font(bold=True, color="1B314B")
+    for i, txt in enumerate(viz_names, start=4):
+        ws[f"A{i}"] = txt
+        ws[f"A{i}"].font = Font(color="1B314B")
+
+    set_col_widths(ws, {1: 44.0, 2: 12.0, 13: 2.5, 14: 44.0})
+
+    # Keep chart data out of sight in hidden far-right columns.
+    data_col_start = 40
+    for c in range(data_col_start, data_col_start + 80):
+        ws.column_dimensions[get_column_letter(c)].hidden = True
+
+    data_row_cursor = 1
+
+    def _write_table(headers: List[str], rows: List[List[Any]]) -> Tuple[int, int, int]:
+        nonlocal data_row_cursor
+        start_row = data_row_cursor
+        n_cols = len(headers)
+        for j, h in enumerate(headers):
+            ws.cell(start_row, data_col_start + j).value = h
+
+        if not rows:
+            rows = [["Ingen data"] + [0 for _ in range(max(n_cols - 1, 0))]]
+
+        for i, row_vals in enumerate(rows, start=start_row + 1):
+            for j, val in enumerate(row_vals):
+                ws.cell(i, data_col_start + j).value = val
+
+        end_row = start_row + len(rows)
+        data_row_cursor = end_row + 3
+        return start_row, end_row, n_cols
+
+    def _apply_chart_common(chart, anchor: str, title: str) -> None:
+        chart.title = title
+        chart.width = 10.8
+        chart.height = 6.6
+        ws.add_chart(chart, anchor)
+
+    if df_overview.empty or df_total.empty:
+        ws["A16"] = "Ingen data tillgänglig för visualiseringar."
+        ws["A16"].font = Font(color="AA0000", bold=True)
+        return
+
+    dfo = df_overview.copy()
+    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
+
+    # V1
+    top_total = df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False]).head(10)
+    v1_rows = [[row.player, float(row.total_borda)] for row in top_total.itertuples(index=False)]
+    t1 = _write_table(["Spelare", "Poäng"], v1_rows)
+    ch1 = BarChart()
+    ch1.y_axis.title = "Poäng"
+    ch1.x_axis.title = "Spelare"
+    ch1.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t1[0], max_row=t1[1]), titles_from_data=True)
+    ch1.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t1[0] + 1, max_row=t1[1]))
+    _apply_chart_common(ch1, "A8", "V1: Totalpoäng topp 10")
+
+    # V2
+    top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).head(10)
+    v2_rows = [[row.player, float(row.total_pts)] for row in top_raw.itertuples(index=False)]
+    t2 = _write_table(["Spelare", "Total pts"], v2_rows)
+    ch2 = BarChart()
+    ch2.y_axis.title = "Total pts"
+    ch2.x_axis.title = "Spelare"
+    ch2.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t2[0], max_row=t2[1]), titles_from_data=True)
+    ch2.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t2[0] + 1, max_row=t2[1]))
+    _apply_chart_common(ch2, "N8", "V2: Total råpoäng topp 10")
+
+    weeks_seen = dfo["week"].dropna().astype(str).unique().tolist()
+    weeks_order = list(weeks) + [w for w in weeks_seen if w not in weeks]
+
+    # V3
+    per_week_borda = (
+        dfo.groupby("week", as_index=False)
+        .agg(avg_borda=("borda_points", "mean"))
+        .set_index("week")
+        .reindex(weeks_order, fill_value=0.0)
+        .reset_index()
+    )
+    v3_rows = [[str(r.week), float(r.avg_borda)] for r in per_week_borda.itertuples(index=False)]
+    t3 = _write_table(["Vecka", "Snitt poäng"], v3_rows)
+    ch3 = LineChart()
+    ch3.y_axis.title = "Snitt poäng"
+    ch3.x_axis.title = "Vecka"
+    ch3.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t3[0], max_row=t3[1]), titles_from_data=True)
+    ch3.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t3[0] + 1, max_row=t3[1]))
+    _apply_chart_common(ch3, "A27", "V3: Snitt liga-poäng per vecka")
+
+    # V4
+    per_week_players = (
+        dfo.groupby("week", as_index=False)
+        .agg(active_players=("player", "nunique"))
+        .set_index("week")
+        .reindex(weeks_order, fill_value=0.0)
+        .reset_index()
+    )
+    v4_rows = [[str(r.week), float(r.active_players)] for r in per_week_players.itertuples(index=False)]
+    t4 = _write_table(["Vecka", "Aktiva spelare"], v4_rows)
+    ch4 = LineChart()
+    ch4.y_axis.title = "Spelare"
+    ch4.x_axis.title = "Vecka"
+    ch4.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t4[0], max_row=t4[1]), titles_from_data=True)
+    ch4.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t4[0] + 1, max_row=t4[1]))
+    _apply_chart_common(ch4, "N27", "V4: Aktiva spelare per vecka")
+
+    # V5
+    slot_order = [map_slot_label(k) for k in SLOT_KEYS_ORDER]
+    per_slot = (
+        dfo.groupby("slot_label", as_index=False)
+        .agg(avg_borda=("borda_points", "mean"))
+        .set_index("slot_label")
+        .reindex(slot_order, fill_value=0.0)
+        .reset_index()
+    )
+    v5_rows = [[str(r.slot_label), float(r.avg_borda)] for r in per_slot.itertuples(index=False)]
+    t5 = _write_table(["Kartslot", "Snitt poäng"], v5_rows)
+    ch5 = BarChart()
+    ch5.y_axis.title = "Snitt poäng"
+    ch5.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t5[0], max_row=t5[1]), titles_from_data=True)
+    ch5.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t5[0] + 1, max_row=t5[1]))
+    _apply_chart_common(ch5, "A46", "V5: Snitt liga-poäng per kartslot")
+
+    # V6
+    category_totals = [
+        ["Moving", float(df_total["cat_moving"].sum())],
+        ["No move", float(df_total["cat_no_move"].sum())],
+        ["NMPZ", float(df_total["cat_nmpz"].sum())],
+        ["Sverige", float(df_total["cat_sverige"].sum())],
+    ]
+    t6 = _write_table(["Kategori", "Total poäng"], category_totals)
+    ch6 = BarChart()
+    ch6.y_axis.title = "Total poäng"
+    ch6.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t6[0], max_row=t6[1]), titles_from_data=True)
+    ch6.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t6[0] + 1, max_row=t6[1]))
+    _apply_chart_common(ch6, "N46", "V6: Total liga-poäng per kategori")
+
+    # V7
+    per_week_raw = (
+        dfo.groupby("week", as_index=False)
+        .agg(avg_raw_pts=("total_pts", "mean"))
+        .set_index("week")
+        .reindex(weeks_order, fill_value=0.0)
+        .reset_index()
+    )
+    v7_rows = [[str(r.week), float(r.avg_raw_pts)] for r in per_week_raw.itertuples(index=False)]
+    t7 = _write_table(["Vecka", "Snitt råpoäng"], v7_rows)
+    ch7 = AreaChart()
+    ch7.y_axis.title = "Snitt råpoäng"
+    ch7.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t7[0], max_row=t7[1]), titles_from_data=True)
+    ch7.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t7[0] + 1, max_row=t7[1]))
+    _apply_chart_common(ch7, "A65", "V7: Snitt råpoäng per vecka")
+
+    # V8
+    top_share = df_total.sort_values("total_borda", ascending=False).head(8)[["player", "total_borda"]].copy()
+    others = float(df_total["total_borda"].sum() - top_share["total_borda"].sum())
+    v8_rows = [[str(r.player), float(r.total_borda)] for r in top_share.itertuples(index=False)]
+    if others > 0:
+        v8_rows.append(["Övriga", others])
+    t8 = _write_table(["Spelare", "Poängandel"], v8_rows)
+    ch8 = PieChart()
+    ch8.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t8[0], max_row=t8[1]), titles_from_data=True)
+    ch8.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t8[0] + 1, max_row=t8[1]))
+    _apply_chart_common(ch8, "N65", "V8: Poängandel topp 8")
+
+    # V9
+    scatter_rows = [[float(r.maps_counted), float(r.avg_pts_per_map)] for r in df_total.itertuples(index=False)]
+    t9 = _write_table(["Kartor", "Snitt pts/karta"], scatter_rows)
+    ch9 = ScatterChart()
+    ch9.x_axis.title = "Kartor spelade"
+    ch9.y_axis.title = "Snitt pts/karta"
+    x_vals = Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t9[0] + 1, max_row=t9[1])
+    y_vals = Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t9[0] + 1, max_row=t9[1])
+    s9 = Series(y_vals, x_vals, title="Spelare")
+    ch9.series.append(s9)
+    _apply_chart_common(ch9, "A84", "V9: Erfarenhet vs snittpoäng")
+
+    # V10
+    category_avg = [
+        ["Moving", float(df_total["cat_moving"].mean())],
+        ["No move", float(df_total["cat_no_move"].mean())],
+        ["NMPZ", float(df_total["cat_nmpz"].mean())],
+        ["Sverige", float(df_total["cat_sverige"].mean())],
+    ]
+    t10 = _write_table(["Kategori", "Snitt poäng"], category_avg)
+    ch10 = RadarChart()
+    ch10.style = 10
+    ch10.y_axis.title = "Snitt poäng"
+    ch10.add_data(Reference(ws, min_col=data_col_start + 1, max_col=data_col_start + 1, min_row=t10[0], max_row=t10[1]), titles_from_data=True)
+    ch10.set_categories(Reference(ws, min_col=data_col_start, max_col=data_col_start, min_row=t10[0] + 1, max_row=t10[1]))
+    _apply_chart_common(ch10, "N84", "V10: Snitt liga-poäng per kategori")
+
+
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     ws = wb.create_sheet("Underligor")
     leagues = ["Moving", "No move", "NMPZ", "Sverige"]
@@ -1702,6 +1913,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels)
     write_stats_sheet(wb_all, df_stats_all)
+    write_visualizations_sheet(wb_all, df_overview_all, df_total_all, week_labels)
     write_underligor_sheet(wb_all, df_overview_all)
     write_raw_sheet(wb_all, df_overview_all)
 
@@ -1721,6 +1933,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels)
         write_stats_sheet(wb_f, df_stats_f)
+        write_visualizations_sheet(wb_f, df_overview_f, df_total_f, week_labels)
         write_underligor_sheet(wb_f, df_overview_f)
         write_raw_sheet(wb_f, df_overview_f)
 

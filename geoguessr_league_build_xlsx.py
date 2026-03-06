@@ -9,6 +9,7 @@ import re
 import sys
 import time
 import traceback
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -1531,10 +1532,20 @@ def write_visualizations_sheet(
         }
     )
 
-    def _save_fig(fig, filename: str) -> Path:
-        fig.tight_layout()
-        out_path = image_dir / filename
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    def _save_fig(fig, filename: str, *, apply_tight_layout: bool = True) -> Path:
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="This figure includes Axes that are not compatible with tight_layout",
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Glyph \d+ .* missing from font\(s\) DejaVu Sans\.",
+            )
+            if apply_tight_layout:
+                fig.tight_layout()
+            out_path = image_dir / filename
+            fig.savefig(out_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         return out_path
 
@@ -1559,12 +1570,24 @@ def write_visualizations_sheet(
             return set()
         return set(points_df.loc[mask, "player"].astype(str).tolist())
 
+    def _safe_plot_label(text: Any) -> str:
+        # Drop non-BMP/control chars that DejaVu Sans often cannot render in PyInstaller builds.
+        raw = str(text or "")
+        cleaned = []
+        for ch in raw:
+            cp = ord(ch)
+            if cp in (9, 10, 13):  # allow basic whitespace
+                cleaned.append(ch)
+            elif 32 <= cp <= 0xFFFF:
+                cleaned.append(ch)
+        return "".join(cleaned)
+
     def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 9) -> None:
         offsets = [(0, 0), (4, 2), (-4, 2), (4, -2), (-4, -2), (0, 4), (0, -4)]
         for i, (xv, yv, label) in enumerate(zip(x_vals, y_vals, labels)):
             dx, dy = offsets[i % len(offsets)]
             ax.annotate(
-                str(label),
+                _safe_plot_label(label),
                 (float(xv), float(yv)),
                 textcoords="offset points",
                 xytext=(dx, dy),
@@ -1682,7 +1705,7 @@ def write_visualizations_sheet(
         )
     else:
         top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).reset_index(drop=True)
-    v2_labels = [str(x) for x in top_raw["player"].tolist()]
+    v2_labels = [_safe_plot_label(x) for x in top_raw["player"].tolist()]
     v2_values = [float(x) for x in pd.to_numeric(top_raw["total_pts"], errors="coerce").fillna(0).tolist()]
     fig_w = max(BASE_FIG_W, min(16.0, 8.0 + 0.22 * max(1, len(v2_labels))))
     fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
@@ -1735,7 +1758,7 @@ def write_visualizations_sheet(
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
         ax.set_yticks(list(range(len(v3_pivot.index))))
-        ax.set_yticklabels([str(p) for p in v3_pivot.index], fontsize=9)
+        ax.set_yticklabels([_safe_plot_label(p) for p in v3_pivot.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Snittpoäng")
     else:
         _empty_plot(ax)
@@ -1757,7 +1780,7 @@ def write_visualizations_sheet(
         xs = list(range(len(v4_values)))
         ax.plot(xs, v4_values, marker="o", color="#E0862B")
         ax.set_xticks(xs)
-        ax.set_xticklabels(v4_labels, rotation=30, ha="right")
+        ax.set_xticklabels([_safe_plot_label(x) for x in v4_labels], rotation=30, ha="right")
         ax.set_ylabel("Antal spelare")
     else:
         _empty_plot(ax)
@@ -1816,7 +1839,7 @@ def write_visualizations_sheet(
         ax.bar(xs, v6_pivot["No move"].tolist(), width=w, label="No move", color="#279B70")
         ax.bar(xs + w, v6_pivot["NMPZ"].tolist(), width=w, label="NMPZ", color="#7A67D8")
         ax.set_xticks(xs)
-        ax.set_xticklabels([str(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=10)
+        ax.set_xticklabels([_safe_plot_label(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=10)
         ax.set_ylabel("Snitt GeoGuessr-poäng")
         ax.legend(fontsize=10)
     else:
@@ -1892,9 +1915,9 @@ def write_visualizations_sheet(
         centered = v9_pivot.sub(v9_pivot.mean(axis=1), axis=0).fillna(0.0)
         im = ax.imshow(centered.values, aspect="auto", cmap="RdYlGn")
         ax.set_xticks(list(range(len(weeks_order))))
-        ax.set_xticklabels([str(w) for w in weeks_order], rotation=30, ha="right", fontsize=10)
+        ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right", fontsize=10)
         ax.set_yticks(list(range(len(centered.index))))
-        ax.set_yticklabels([str(p) for p in centered.index], fontsize=9)
+        ax.set_yticklabels([_safe_plot_label(p) for p in centered.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Över/under eget snitt")
     else:
         _empty_plot(ax)
@@ -1967,14 +1990,14 @@ def write_visualizations_sheet(
         y1 = list(range(len(load_pc1)))
         ax_l1.barh(y1, [float(x[1]) for x in load_pc1], color="#2A77D4")
         ax_l1.set_yticks(y1)
-        ax_l1.set_yticklabels([str(x[0]) for x in load_pc1], fontsize=9)
+        ax_l1.set_yticklabels([_safe_plot_label(x[0]) for x in load_pc1], fontsize=9)
         ax_l1.invert_yaxis()
         ax_l1.set_title("PC1 bidrag (loading)")
 
         y2 = list(range(len(load_pc2)))
         ax_l2.barh(y2, [float(x[1]) for x in load_pc2], color="#279B70")
         ax_l2.set_yticks(y2)
-        ax_l2.set_yticklabels([str(x[0]) for x in load_pc2], fontsize=9)
+        ax_l2.set_yticklabels([_safe_plot_label(x[0]) for x in load_pc2], fontsize=9)
         ax_l2.invert_yaxis()
         ax_l2.set_title("PC2 bidrag (loading)")
     else:
@@ -1982,7 +2005,7 @@ def write_visualizations_sheet(
         _empty_plot(ax_l1)
         _empty_plot(ax_l2)
     fig.suptitle("V10: PCA spelarmönster + bidrag till PC1/PC2", fontsize=12, y=0.99)
-    v10_path = _save_fig(fig, "V10_pca_spelarmonster_loadings.png")
+    v10_path = _save_fig(fig, "V10_pca_spelarmonster_loadings.png", apply_tight_layout=False)
 
     # V11: Standardavvikelse per karttyp och spelare
     std_by_mode = (
@@ -2018,7 +2041,7 @@ def write_visualizations_sheet(
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
         ax.set_yticks(list(range(len(v11_pivot.index))))
-        ax.set_yticklabels([str(p) for p in v11_pivot.index], fontsize=9)
+        ax.set_yticklabels([_safe_plot_label(p) for p in v11_pivot.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Std i poäng")
     else:
         _empty_plot(ax)

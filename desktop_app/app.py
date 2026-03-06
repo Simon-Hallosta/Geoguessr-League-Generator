@@ -52,6 +52,18 @@ ACCENT_SOFT = "#DCEBFF"
 LOG_BG = "#0D1B2A"
 LOG_FG = "#E8F1FB"
 
+TABLE_SORT_OPTIONS = [
+    ("Standard (Poäng)", "default"),
+    ("Total pts", "total_pts"),
+    ("Kartor", "maps"),
+    ("Veckor", "weeks"),
+    ("Snitt pts/karta", "avg_pts"),
+    ("Snitt poäng/karta", "avg_points"),
+]
+TABLE_SORT_LABEL_TO_KEY = {label: key for label, key in TABLE_SORT_OPTIONS}
+TABLE_SORT_KEY_TO_LABEL = {key: label for label, key in TABLE_SORT_OPTIONS}
+DEFAULT_TABLE_SORT_KEY = "default"
+
 if getattr(sys, "frozen", False):
     os.chdir(ROOT_DIR)
 
@@ -389,6 +401,7 @@ class LeagueDesktopApp:
         self.out_base_var = tk.StringVar(value="Liga")
         self.tz_var = tk.StringVar(value="Europe/Stockholm")
         self.tie_var = tk.StringVar(value="average")
+        self.table_sort_var = tk.StringVar(value=TABLE_SORT_KEY_TO_LABEL[DEFAULT_TABLE_SORT_KEY])
         self.fetch_played_at_var = tk.BooleanVar(value=False)
         self.keep_missing_time_var = tk.BooleanVar(value=False)
         self.debug_var = tk.BooleanVar(value=False)
@@ -585,7 +598,7 @@ class LeagueDesktopApp:
 
         options_frame = ttk.LabelFrame(outer, text="3) Körning", style="Card.TLabelframe", padding=12)
         options_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        for i in range(5):
+        for i in range(6):
             options_frame.columnconfigure(i, weight=1 if i in (1, 3) else 0)
 
         ttk.Label(options_frame, text="Output-bas:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
@@ -606,11 +619,28 @@ class LeagueDesktopApp:
             width=10,
         )
         self.tie_combo.grid(row=0, column=5, sticky="w")
+
+        ttk.Label(options_frame, text="Sortera tabeller:", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.sort_combo = ttk.Combobox(
+            options_frame,
+            style="Modern.TCombobox",
+            textvariable=self.table_sort_var,
+            values=[label for label, _ in TABLE_SORT_OPTIONS],
+            state="readonly",
+            width=24,
+        )
+        self.sort_combo.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(
+            options_frame,
+            text="Gäller Total, Stats och Underligor.",
+            style="Hint.TLabel",
+        ).grid(row=1, column=2, columnspan=4, sticky="w", pady=(8, 0))
+
         ttk.Label(
             options_frame,
             text="Obs: Tid används alltid som tie-break vid samma poäng. Tie-läge gäller bara exakt lika poäng + tid.",
             style="Hint.TLabel",
-        ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         self.fetch_chk = ttk.Checkbutton(
             options_frame,
@@ -625,12 +655,12 @@ class LeagueDesktopApp:
             variable=self.keep_missing_time_var,
         )
         self.debug_chk = ttk.Checkbutton(options_frame, text="Debug-logg", style="Card.TCheckbutton", variable=self.debug_var)
-        self.fetch_chk.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        self.keep_missing_chk.grid(row=2, column=3, columnspan=2, sticky="w", pady=(8, 0))
-        self.debug_chk.grid(row=2, column=5, sticky="w", pady=(8, 0))
+        self.fetch_chk.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.keep_missing_chk.grid(row=3, column=3, columnspan=2, sticky="w", pady=(8, 0))
+        self.debug_chk.grid(row=3, column=5, sticky="w", pady=(8, 0))
 
         run_row = ttk.Frame(options_frame, style="Card.TFrame")
-        run_row.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(12, 0))
+        run_row.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(12, 0))
         self.run_btn = ttk.Button(run_row, text="Kör och skapa Excel", style="Accent.TButton", command=self.start_generation)
         self.info_cfg_btn = ttk.Button(run_row, text="Redigera Information-flik", style="Outline.TButton", command=self.open_information_config_dialog)
         self.open_folder_btn = ttk.Button(run_row, text="Öppna projektmapp", style="Soft.TButton", command=self.open_project_folder)
@@ -639,7 +669,7 @@ class LeagueDesktopApp:
         self.open_folder_btn.pack(side="left", padx=(8, 0))
 
         progress_row = ttk.Frame(options_frame, style="Card.TFrame")
-        progress_row.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(10, 0))
+        progress_row.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(10, 0))
         progress_row.columnconfigure(0, weight=1)
         self.progress_bar = ttk.Progressbar(progress_row, mode="indeterminate")
         self.progress_bar.grid(row=0, column=0, sticky="ew")
@@ -732,6 +762,7 @@ class LeagueDesktopApp:
         ]:
             widget.configure(state=state)
         self.tie_combo.configure(state=combo_state)
+        self.sort_combo.configure(state=combo_state)
 
     def log(self, text: str) -> None:
         self.log_text.insert("end", text.rstrip() + "\n")
@@ -1064,12 +1095,14 @@ class LeagueDesktopApp:
             )
 
         tz_name = self.tz_var.get().strip() or "Europe/Stockholm"
+        table_sort_key = TABLE_SORT_LABEL_TO_KEY.get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY)
 
         os.environ["GEOGUESSR_NCFA"] = ncfa
         args: list[str] = []
         for week in weeks:
             args.extend(["--week", week.to_week_arg()])
         args.extend(["--out-base", out_base, "--tz", tz_name, "--tie", self.tie_var.get(), "--ncfa", ncfa])
+        args.extend(["--sort-by", table_sort_key])
         args.extend(["--information-config", str(INFO_CONFIG_PATH)])
         if self.fetch_played_at_var.get():
             args.append("--fetch-played-at")
@@ -1169,6 +1202,7 @@ class LeagueDesktopApp:
                 "out_base": self.out_base_var.get().strip(),
                 "tz": self.tz_var.get().strip(),
                 "tie": self.tie_var.get().strip(),
+                "sort_by": TABLE_SORT_LABEL_TO_KEY.get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY),
                 "fetch_played_at": bool(self.fetch_played_at_var.get()),
                 "keep_missing_time": bool(self.keep_missing_time_var.get()),
                 "debug": bool(self.debug_var.get()),
@@ -1195,6 +1229,10 @@ class LeagueDesktopApp:
             self.tz_var.set(str(settings.get("tz", self.tz_var.get())) or "Europe/Stockholm")
             tie_value = str(settings.get("tie", self.tie_var.get()))
             self.tie_var.set(tie_value if tie_value in {"average", "dense", "min", "max"} else "average")
+            sort_key = str(settings.get("sort_by", DEFAULT_TABLE_SORT_KEY)).strip().lower()
+            if sort_key not in TABLE_SORT_KEY_TO_LABEL:
+                sort_key = DEFAULT_TABLE_SORT_KEY
+            self.table_sort_var.set(TABLE_SORT_KEY_TO_LABEL[sort_key])
             self.fetch_played_at_var.set(bool(settings.get("fetch_played_at", False)))
             self.keep_missing_time_var.set(bool(settings.get("keep_missing_time", False)))
             self.debug_var.set(bool(settings.get("debug", False)))

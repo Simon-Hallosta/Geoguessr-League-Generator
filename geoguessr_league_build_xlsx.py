@@ -158,6 +158,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     # scoring / tie handling (only for exact ties on points+time; rare)
     ap.add_argument("--tie", default="average", choices=["average", "dense", "min", "max"])
+    ap.add_argument(
+        "--sort-by",
+        default="default",
+        help=(
+            "Sortering för tabeller. Stöder bl.a: default, points, total_pts, maps, weeks, "
+            "avg_pts, avg_points (samt svenska alias)."
+        ),
+    )
 
     # highscores pagination
     ap.add_argument("--page-size", type=int, default=200)
@@ -1334,6 +1342,99 @@ def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFram
     return out
 
 
+def normalize_sort_key(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    aliases = {
+        "": "default",
+        "default": "default",
+        "standard": "default",
+        "poang": "points",
+        "poäng": "points",
+        "points": "points",
+        "liga_poang": "points",
+        "ligapoang": "points",
+        "liga_poäng": "points",
+        "ligapoäng": "points",
+        "total_pts": "total_pts",
+        "total pts": "total_pts",
+        "total": "total_pts",
+        "kartor": "maps",
+        "maps": "maps",
+        "veckor": "weeks",
+        "weeks": "weeks",
+        "snitt_pts": "avg_pts",
+        "snitt pts": "avg_pts",
+        "snitt_pts_per_karta": "avg_pts",
+        "avg_pts": "avg_pts",
+        "avg_pts_per_map": "avg_pts",
+        "snitt_poang": "avg_points",
+        "snitt poang": "avg_points",
+        "snitt_poäng": "avg_points",
+        "snitt poäng": "avg_points",
+        "snitt_ligapoang": "avg_points",
+        "snitt_ligapoäng": "avg_points",
+        "avg_points": "avg_points",
+        "avg_borda_per_map": "avg_points",
+    }
+    return aliases.get(s, "default")
+
+
+def _num_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col in df.columns:
+        return pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    return pd.Series([0.0] * len(df), index=df.index, dtype=float)
+
+
+def sort_total_table(df_total: pd.DataFrame, sort_by: str) -> pd.DataFrame:
+    if df_total.empty:
+        return df_total
+    key = normalize_sort_key(sort_by)
+    t = df_total.copy()
+    t["_points"] = _num_col(t, "total_borda")
+    t["_total_pts"] = _num_col(t, "total_pts")
+    t["_maps"] = _num_col(t, "maps_counted")
+    t["_weeks"] = _num_col(t, "weeks_counted")
+    t["_avg_pts"] = _num_col(t, "avg_pts_per_map")
+    t["_avg_points"] = _num_col(t, "avg_borda_per_map")
+
+    by_key: Dict[str, Tuple[List[str], List[bool]]] = {
+        "default": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
+        "points": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
+        "total_pts": (["_total_pts", "_points", "_maps", "player"], [False, False, False, True]),
+        "maps": (["_maps", "_points", "_total_pts", "player"], [False, False, False, True]),
+        "weeks": (["_weeks", "_points", "_total_pts", "player"], [False, False, False, True]),
+        "avg_pts": (["_avg_pts", "_total_pts", "_points", "player"], [False, False, False, True]),
+        "avg_points": (["_avg_points", "_points", "_total_pts", "player"], [False, False, False, True]),
+    }
+    cols, asc = by_key.get(key, by_key["default"])
+    return t.sort_values(cols, ascending=asc).drop(columns=[c for c in t.columns if c.startswith("_")]).reset_index(drop=True)
+
+
+def sort_subleague_table(table: pd.DataFrame, sort_by: str) -> pd.DataFrame:
+    if table.empty:
+        return table
+    key = normalize_sort_key(sort_by)
+    t = table.copy()
+    t["_points"] = _num_col(t, "league_points")
+    t["_total_pts"] = _num_col(t, "total_pts")
+    t["_maps"] = _num_col(t, "maps_counted")
+    t["_weeks"] = _num_col(t, "weeks_counted")
+    t["_avg_pts"] = t["_total_pts"] / t["_maps"].clip(lower=1.0)
+    t["_avg_points"] = t["_points"] / t["_maps"].clip(lower=1.0)
+
+    by_key: Dict[str, Tuple[List[str], List[bool]]] = {
+        "default": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
+        "points": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
+        "total_pts": (["_total_pts", "_points", "_maps", "player"], [False, False, False, True]),
+        "maps": (["_maps", "_points", "_total_pts", "player"], [False, False, False, True]),
+        "weeks": (["_weeks", "_points", "_total_pts", "player"], [False, False, False, True]),
+        "avg_pts": (["_avg_pts", "_total_pts", "_points", "player"], [False, False, False, True]),
+        "avg_points": (["_avg_points", "_points", "_total_pts", "player"], [False, False, False, True]),
+    }
+    cols, asc = by_key.get(key, by_key["default"])
+    return t.sort_values(cols, ascending=asc).drop(columns=[c for c in t.columns if c.startswith("_")]).reset_index(drop=True)
+
+
 def _clean_round_time_for_table(v: Any) -> Optional[int]:
     iv = _parse_int_maybe(v)
     if iv is None:
@@ -1596,7 +1697,13 @@ def write_week_sheet(
             style_cell(ws, r, c, fill=fill, font=FONT_BODY, align=CENTER)
 
 
-def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.DataFrame, weeks: List[str]) -> None:
+def write_total_sheet(
+    wb: Workbook,
+    df_total: pd.DataFrame,
+    df_overview: pd.DataFrame,
+    weeks: List[str],
+    sort_by: str = "default",
+) -> None:
     ws = wb.create_sheet("Total")
 
     # Header
@@ -1621,7 +1728,9 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
     )
     pivot = per_week.pivot_table(index="player", columns="week", values="week_borda", aggfunc="sum")
 
-    for idx, row in enumerate(df_total.itertuples(index=False), start=1):
+    sorted_total = sort_total_table(df_total, sort_by=sort_by)
+
+    for idx, row in enumerate(sorted_total.itertuples(index=False), start=1):
         r = 2 + idx
         base_fill = ROW_A if (idx % 2 == 1) else ROW_B
         fill = rank_row_fill(idx, base_fill)
@@ -1650,7 +1759,7 @@ def write_total_sheet(wb: Workbook, df_total: pd.DataFrame, df_overview: pd.Data
             style_cell(ws, r, c, fill=fill, font=FONT_BODY, align=CENTER)
 
 
-def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
+def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "default") -> None:
     ws = wb.create_sheet("Stats")
 
     merge_and_style(ws, 1, 1, 1, 22, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
@@ -1686,7 +1795,9 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame) -> None:
     }
     set_col_widths(ws, widths)
 
-    for idx, row in enumerate(df_stats.itertuples(index=False), start=1):
+    sorted_stats = sort_total_table(df_stats, sort_by=sort_by)
+
+    for idx, row in enumerate(sorted_stats.itertuples(index=False), start=1):
         r = 2 + idx
         base_fill = ROW_A if (idx % 2 == 1) else ROW_B
         fill = rank_row_fill(idx, base_fill)
@@ -2347,7 +2458,7 @@ def write_visualizations_sheet(
     # Intentionally no footer text to keep the sheet compact.
 
 
-def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
+def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str = "default") -> None:
     ws = wb.create_sheet("Underligor")
     leagues = ["Moving", "No move", "NMPZ", "Sverige"]
     block_widths = [4.5, 22.0, 12.0, 10.0, 8.0, 8.0]
@@ -2383,7 +2494,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
             style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
 
         data_start_row = section_row + 2
-        table = tables.get(league_name, pd.DataFrame())
+        table = sort_subleague_table(tables.get(league_name, pd.DataFrame()), sort_by=sort_by)
         first_section_max_rows = max(first_section_max_rows, len(table))
         for idx, row in enumerate(table.itertuples(index=False), start=1):
             r = data_start_row + (idx - 1)
@@ -2408,10 +2519,10 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
     fast_leagues = ["Sverige", "Världen"]
     fast_block_cols = len(fast_headers)
-    fast_gap_cols = 2
+    fast_start_cols = [1, 8]  # align with block-grid columns above (1, 8, 15, 22)
 
     for i, fast_name in enumerate(fast_leagues):
-        start_col = 1 + i * (fast_block_cols + fast_gap_cols)
+        start_col = fast_start_cols[i]
         end_col = start_col + fast_block_cols - 1
         merge_and_style(
             ws,
@@ -2558,6 +2669,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("[START] weeks :", [(w.label, str(w.urls_path), w.deadline) for w in weeks])
     print("[START] fetch_played_at:", bool(args.fetch_played_at))
     print("[START] tz:", args.tz)
+    print("[START] sort_by:", normalize_sort_key(args.sort_by))
 
     if args.information_config.strip():
         info_config_path = Path(args.information_config.strip()).expanduser()
@@ -2660,9 +2772,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         dl_str = w.deadline or ""
         write_week_sheet(wb_all, w.label, f"Deadline {dl_str}" if dl_str else "Deadline", df_weekly_all, df_overview_all, df_meta_all)
 
-    write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels)
-    write_stats_sheet(wb_all, df_stats_all)
-    write_underligor_sheet(wb_all, df_overview_all)
+    write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels, sort_by=args.sort_by)
+    write_stats_sheet(wb_all, df_stats_all, sort_by=args.sort_by)
+    write_underligor_sheet(wb_all, df_overview_all, sort_by=args.sort_by)
     write_visualizations_sheet(
         wb_all,
         df_overview_all,
@@ -2686,9 +2798,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             dl_str = w.deadline or ""
             write_week_sheet(wb_f, w.label, f"Deadline {dl_str}" if dl_str else "Deadline", df_weekly_f, df_overview_f, df_meta_f)
 
-        write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels)
-        write_stats_sheet(wb_f, df_stats_f)
-        write_underligor_sheet(wb_f, df_overview_f)
+        write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels, sort_by=args.sort_by)
+        write_stats_sheet(wb_f, df_stats_f, sort_by=args.sort_by)
+        write_underligor_sheet(wb_f, df_overview_f, sort_by=args.sort_by)
         write_visualizations_sheet(
             wb_f,
             df_overview_f,

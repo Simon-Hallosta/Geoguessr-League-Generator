@@ -241,7 +241,16 @@ def _parse_int_maybe(x: Any) -> Optional[int]:
     if isinstance(x, int):
         return x
     if isinstance(x, float):
+        if not math.isfinite(x):
+            return None
         return int(x)
+    try:
+        if not isinstance(x, str):
+            xf = float(x)
+            if math.isfinite(xf):
+                return int(xf)
+    except Exception:
+        pass
     if isinstance(x, str):
         s = x.strip().replace(",", "")
         if s.isdigit():

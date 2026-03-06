@@ -1448,16 +1448,19 @@ def write_visualizations_sheet(
     merge_and_style(ws, 1, 1, 1, 24, "Visualiseringar (Experiment)", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     viz_names = [
-        "V1: Tid vs poäng per karta (nyckelspelare)",
-        "V2: Total råpoäng topp 12",
+        "V1A: Tid vs poäng (Moving)",
+        "V1B: Tid vs poäng (No move)",
+        "V1C: Tid vs poäng (NMPZ)",
+        "V2: Total råpoäng topp 20",
         "V3: Snitt GeoGuessr-poäng per karttyp och spelare",
         "V4: Aktiva spelare per vecka",
         "V5: Ligans snitt GeoGuessr-poäng per underliga-kategori",
-        "V6: Spelarprofiler per kategori (radar, topp 4)",
+        "V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)",
         "V7: Poängfördelning per karttyp",
-        "V8: Stabilitet vs nivå per spelare",
-        "V9: Veckotrend (förbättring/försämring)",
-        "V10: PCA spelarmönster",
+        "V8: Stabilitet vs nivå (std mot snittpoäng)",
+        "V9: Veckotrend-heatmap (över/under eget snitt)",
+        "V10: PCA spelarmönster + bidrag till PC1/PC2",
+        "V11: Standardavvikelse per karttyp och spelare",
     ]
     ws["A3"] = "Diagramöversikt:"
     ws["A3"].font = Font(bold=True, color="1B314B")
@@ -1503,32 +1506,33 @@ def write_visualizations_sheet(
         plt.close(fig)
         return out_path
 
-    def _insert_image(path: Path, anchor: str) -> None:
+    def _insert_image(path: Path, anchor: str, width: int = 620, height: int = 320) -> None:
         img = XLImage(str(path))
-        img.width = 620
-        img.height = 340
+        img.width = width
+        img.height = height
         ws.add_image(img, anchor)
 
-    def _safe_col_sum(col: str) -> float:
-        if col not in df_total.columns:
-            return 0.0
-        return float(pd.to_numeric(df_total[col], errors="coerce").fillna(0).sum())
-
-    def _safe_col_mean(col: str) -> float:
-        if col not in df_total.columns:
-            return 0.0
-        series = pd.to_numeric(df_total[col], errors="coerce").fillna(0.0)
-        return float(series.mean()) if not series.empty else 0.0
+    def _detect_outlier_players(points_df: pd.DataFrame, x_col: str, y_col: str, z_thresh: float = 2.35) -> set[str]:
+        if points_df.empty or len(points_df) < 5:
+            return set()
+        x = pd.to_numeric(points_df[x_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        y = pd.to_numeric(points_df[y_col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        sx = float(np.std(x))
+        sy = float(np.std(y))
+        zx = np.zeros_like(x) if sx <= 1e-9 else (x - float(np.mean(x))) / sx
+        zy = np.zeros_like(y) if sy <= 1e-9 else (y - float(np.mean(y))) / sy
+        radial = np.sqrt(zx * zx + zy * zy)
+        mask = radial >= z_thresh
+        if "player" not in points_df.columns:
+            return set()
+        return set(points_df.loc[mask, "player"].astype(str).tolist())
 
     dfo = df_overview.copy()
     dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
     dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
     dfo["total_pts"] = pd.to_numeric(dfo["total_pts"], errors="coerce").fillna(0.0)
     dfo["total_time"] = pd.to_numeric(dfo["total_time"], errors="coerce").fillna(0.0)
-
-    weeks_seen = dfo["week"].dropna().astype(str).tolist()
-    weeks_order = list(dict.fromkeys(list(weeks) + weeks_seen))
-    week_index = {w: i for i, w in enumerate(weeks_order)}
+    dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
 
     slot_to_mode3 = {
         "moving_1": "Moving",
@@ -1540,86 +1544,124 @@ def write_visualizations_sheet(
     }
     dfo["mode3"] = dfo["slot_key"].map(slot_to_mode3).fillna("Other")
 
-    top_players = (
-        df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False])["player"].head(8).astype(str).tolist()
-        if not df_total.empty else []
+    weeks_seen = dfo["week"].dropna().astype(str).tolist()
+    weeks_order = list(dict.fromkeys(list(weeks) + weeks_seen))
+
+    total_maps = max(1, int(dfo["week_map_key"].nunique()))
+    min_maps_for_labels = max(1, int(math.ceil(total_maps * 0.75)))
+    maps_by_player = dfo.groupby("player")["week_map_key"].nunique()
+    qualified_players = set(
+        maps_by_player[maps_by_player >= min_maps_for_labels].index.astype(str).tolist()
     )
 
-    # V1: Tid vs poang per karta med nyckelspelare
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    if not dfo.empty:
-        x_all = (dfo["total_time"] / 60.0).tolist()
-        y_all = dfo["total_pts"].tolist()
-        ax.scatter(x_all, y_all, s=18, alpha=0.18, color="#7F8C8D", label="Alla rundor")
-        palette = ["#2A77D4", "#E0862B", "#279B70", "#7A67D8", "#C94F7C", "#8D6E63", "#008B8B", "#BC8F00"]
-        for i, p in enumerate(top_players[:6]):
-            part = dfo[dfo["player"].astype(str) == p]
-            if part.empty:
-                continue
-            x = (part["total_time"] / 60.0).tolist()
-            y = part["total_pts"].tolist()
-            color = palette[i % len(palette)]
-            ax.scatter(x, y, s=24, alpha=0.65, color=color, label=p)
-            ax.annotate(
-                p,
-                (float(part["total_time"].mean() / 60.0), float(part["total_pts"].mean())),
-                fontsize=8,
-                color=color,
-            )
-        ax.set_xlabel("Tid per karta (min)")
-        ax.set_ylabel("GeoGuessr-poäng")
-        ax.legend(loc="best", fontsize=7, frameon=True)
-    else:
-        _empty_plot(ax)
-    ax.set_title("V1: Tid vs poäng per karta (nyckelspelare)")
-    v1_path = _save_fig(fig, "V1_tid_vs_poang_nyckelspelare.png")
+    total_pts_series = (
+        df_total.set_index("player")["total_pts"]
+        if ("player" in df_total.columns and "total_pts" in df_total.columns)
+        else pd.Series(dtype=float)
+    )
+    total_pts_dict = {str(k): float(v) for k, v in total_pts_series.items()}
 
-    # V2: Total rapoang topp 12
-    top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).head(12)
+    # V1A/B/C: Tid vs poang per karttyp
+    v1_paths: List[Path] = []
+    for mode_name, color, tag in [
+        ("Moving", "#2A77D4", "V1A"),
+        ("No move", "#279B70", "V1B"),
+        ("NMPZ", "#7A67D8", "V1C"),
+    ]:
+        part = dfo[dfo["mode3"] == mode_name].copy()
+        fig, ax = plt.subplots(figsize=(8.6, 4.8))
+        if not part.empty:
+            ax.scatter(part["total_time"] / 60.0, part["total_pts"], s=14, alpha=0.14, color="#808B96", label="Alla rundor")
+            by_player = (
+                part.groupby("player", as_index=False)
+                .agg(
+                    mean_time_min=("total_time", lambda s: float(np.mean(s)) / 60.0),
+                    mean_pts=("total_pts", "mean"),
+                    maps=("total_pts", "count"),
+                )
+            )
+            outliers = _detect_outlier_players(by_player, "mean_time_min", "mean_pts")
+            label_players = (set(by_player["player"].astype(str).tolist()) & qualified_players) | outliers
+
+            sizes = [22 + min(60.0, float(m) * 1.2) for m in by_player["maps"].tolist()]
+            ax.scatter(
+                by_player["mean_time_min"].tolist(),
+                by_player["mean_pts"].tolist(),
+                s=sizes,
+                alpha=0.82,
+                color=color,
+                edgecolors="white",
+                linewidths=0.5,
+                label="Spelarmedel",
+            )
+            for row in by_player.itertuples(index=False):
+                p = str(row.player)
+                if p in label_players:
+                    ax.annotate(p, (float(row.mean_time_min), float(row.mean_pts)), fontsize=7)
+            ax.set_xlabel("Tid per karta (min)")
+            ax.set_ylabel("GeoGuessr-poäng")
+            ax.legend(loc="best", fontsize=7, frameon=True)
+        else:
+            _empty_plot(ax)
+        ax.set_title(f"{tag}: Tid vs poäng ({mode_name})")
+        v1_paths.append(_save_fig(fig, f"{tag}_tid_vs_poang_{mode_name.lower().replace(' ', '_')}.png"))
+
+    # V2: Total rapoang topp 20
+    top_raw = df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False]).head(20)
     v2_labels = [str(x) for x in top_raw["player"].tolist()]
     v2_values = [float(x) for x in pd.to_numeric(top_raw["total_pts"], errors="coerce").fillna(0).tolist()]
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
     if v2_values:
-        xs = list(range(len(v2_labels)))
-        ax.bar(xs, v2_values, color="#279B70")
-        ax.set_xticks(xs)
-        ax.set_xticklabels(v2_labels, rotation=30, ha="right")
-        ax.set_ylabel("Total pts")
+        labels_rev = list(reversed(v2_labels))
+        vals_rev = list(reversed(v2_values))
+        ys = list(range(len(labels_rev)))
+        ax.barh(ys, vals_rev, color="#279B70")
+        ax.set_yticks(ys)
+        ax.set_yticklabels(labels_rev, fontsize=8)
+        ax.set_ylabel("Spelare")
+        ax.set_xlabel("GeoGuessr-poäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V2: Total rapoang topp 12")
-    v2_path = _save_fig(fig, "V2_total_rapoang_topp12.png")
+    ax.set_title("V2: Total råpoäng topp 20")
+    v2_path = _save_fig(fig, "V2_total_rapoang_topp20.png")
 
     # V3: Snitt GeoGuessr-poang per karttyp och spelare (heatmap)
-    mode_table = (
+    mode_avg = (
         dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
         .groupby(["player", "mode3"], as_index=False)
         .agg(avg_pts=("total_pts", "mean"))
     )
-    ordered_players = (
-        df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False])["player"].head(16).astype(str).tolist()
-        if not df_total.empty else []
-    )
-    pivot = (
-        mode_table.pivot_table(index="player", columns="mode3", values="avg_pts", aggfunc="mean")
-        .reindex(ordered_players)
+    if qualified_players:
+        v3_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
+    else:
+        v3_players = (
+            dfo.groupby("player", as_index=False)
+            .agg(maps=("week_map_key", "nunique"))
+            .sort_values("maps", ascending=False)["player"]
+            .astype(str)
+            .head(30)
+            .tolist()
+        )
+    v3_pivot = (
+        mode_avg.pivot_table(index="player", columns="mode3", values="avg_pts", aggfunc="mean")
+        .reindex(v3_players)
         .fillna(0.0)
     )
     for col in ["Moving", "No move", "NMPZ"]:
-        if col not in pivot.columns:
-            pivot[col] = 0.0
-    pivot = pivot[["Moving", "No move", "NMPZ"]]
+        if col not in v3_pivot.columns:
+            v3_pivot[col] = 0.0
+    v3_pivot = v3_pivot[["Moving", "No move", "NMPZ"]]
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    if not pivot.empty:
-        im = ax.imshow(pivot.values, aspect="auto", cmap="YlGnBu")
-        ax.set_yticks(list(range(len(pivot.index))))
-        ax.set_yticklabels([str(p) for p in pivot.index], fontsize=7)
+    if not v3_pivot.empty:
+        im = ax.imshow(v3_pivot.values, aspect="auto", cmap="YlGnBu")
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
-        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+        ax.set_yticks(list(range(len(v3_pivot.index))))
+        ax.set_yticklabels([str(p) for p in v3_pivot.index], fontsize=7)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Snittpoäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V3: Snitt GeoGuessr-poang per karttyp och spelare")
+    ax.set_title("V3: Snitt GeoGuessr-poäng per karttyp och spelare")
     v3_path = _save_fig(fig, "V3_snitt_ggpoang_karttyp_spelare.png")
 
     # V4: Aktiva spelare per vecka
@@ -1638,19 +1680,20 @@ def write_visualizations_sheet(
         ax.plot(xs, v4_values, marker="o", color="#E0862B")
         ax.set_xticks(xs)
         ax.set_xticklabels(v4_labels, rotation=30, ha="right")
-        ax.set_ylabel("Spelare")
+        ax.set_ylabel("Antal spelare")
     else:
         _empty_plot(ax)
     ax.set_title("V4: Aktiva spelare per vecka")
     v4_path = _save_fig(fig, "V4_aktiva_spelare_vecka.png")
 
-    # V5: Ligans snitt GeoGuessr-poang for underliga-kategorier
     cat_slots = {
         "Moving": ["moving_1", "moving_2"],
         "No move": ["no_move_1", "no_move_2"],
         "NMPZ": ["nmpz_1", "nmpz_2"],
         "Sverige": ["moving_1", "no_move_2"],
     }
+
+    # V5: Ligans snitt GeoGuessr-poang per underliga-kategori
     v5_labels = ["Moving", "No move", "NMPZ", "Sverige"]
     v5_values: List[float] = []
     for cat in v5_labels:
@@ -1662,178 +1705,272 @@ def write_visualizations_sheet(
         ax.bar(xs, v5_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B"])
         ax.set_xticks(xs)
         ax.set_xticklabels(v5_labels)
-        ax.set_ylabel("Snitt GeoGuessr-poang")
+        ax.set_ylabel("Snitt GeoGuessr-poäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V5: Ligans snitt GeoGuessr-poang per underliga-kategori")
+    ax.set_title("V5: Ligans snitt GeoGuessr-poäng per underliga-kategori")
     v5_path = _save_fig(fig, "V5_ligans_snitt_ggpoang_underliga.png")
 
-    # V6: Radarprofiler for toppspelare
-    radar_labels = ["Moving", "No move", "NMPZ", "Sverige"]
-    angles = [n / float(len(radar_labels)) * 2 * math.pi for n in range(len(radar_labels))]
-    angles += angles[:1]
-    fig, ax = plt.subplots(figsize=(8.6, 4.8), subplot_kw={"projection": "polar"})
-    used_any = False
-    for i, p in enumerate(top_players[:4]):
-        part = dfo[dfo["player"].astype(str) == p]
-        if part.empty:
-            continue
-        vals = []
-        for cat in radar_labels:
-            sub = part[part["slot_key"].isin(cat_slots[cat])]
-            vals.append(float(sub["total_pts"].mean()) if not sub.empty else 0.0)
-        vals = vals + vals[:1]
-        ax.plot(angles, vals, linewidth=2, label=p)
-        ax.fill(angles, vals, alpha=0.08)
-        used_any = True
-    if used_any:
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(radar_labels)
-        ax.legend(loc="upper right", bbox_to_anchor=(1.24, 1.14), fontsize=7)
-    else:
-        _empty_plot(ax)
-    ax.set_title("V6: Spelarprofiler per kategori (radar, topp 4)")
-    v6_path = _save_fig(fig, "V6_spelarprofiler_radar_topp4.png")
-
-    # V7: Poangfordelning per karttyp
+    # V6: Topp-spelare per karttyp (snitt)
+    by_mode_player = (
+        dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
+        .groupby(["player", "mode3"], as_index=False)
+        .agg(avg_pts=("total_pts", "mean"))
+    )
+    v6_players = (
+        df_total.sort_values(["total_pts", "total_borda"], ascending=[False, False])["player"]
+        .astype(str).head(12).tolist()
+    )
+    v6_pivot = (
+        by_mode_player.pivot_table(index="player", columns="mode3", values="avg_pts", aggfunc="mean")
+        .reindex(v6_players)
+        .fillna(0.0)
+    )
+    for col in ["Moving", "No move", "NMPZ"]:
+        if col not in v6_pivot.columns:
+            v6_pivot[col] = 0.0
+    v6_pivot = v6_pivot[["Moving", "No move", "NMPZ"]]
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    has_hist = False
-    for cat, color in [("Moving", "#2A77D4"), ("No move", "#279B70"), ("NMPZ", "#7A67D8")]:
-        part = dfo[dfo["mode3"] == cat]
-        if part.empty:
-            continue
-        ax.hist(part["total_pts"].tolist(), bins=20, alpha=0.45, label=cat, color=color)
-        has_hist = True
-    if has_hist:
-        ax.set_xlabel("GeoGuessr-poang")
-        ax.set_ylabel("Antal rundor")
+    if not v6_pivot.empty:
+        xs = np.arange(len(v6_pivot.index))
+        w = 0.26
+        ax.bar(xs - w, v6_pivot["Moving"].tolist(), width=w, label="Moving", color="#2A77D4")
+        ax.bar(xs, v6_pivot["No move"].tolist(), width=w, label="No move", color="#279B70")
+        ax.bar(xs + w, v6_pivot["NMPZ"].tolist(), width=w, label="NMPZ", color="#7A67D8")
+        ax.set_xticks(xs)
+        ax.set_xticklabels([str(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=8)
+        ax.set_ylabel("Snitt GeoGuessr-poäng")
         ax.legend(fontsize=8)
     else:
         _empty_plot(ax)
-    ax.set_title("V7: Poangfordelning per karttyp")
-    v7_path = _save_fig(fig, "V7_poangfordelning_karttyp.png")
+    ax.set_title("V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)")
+    v6_path = _save_fig(fig, "V6_toppspelare_karttyp.png")
 
-    # V8: Stabilitet vs niva (std vs mean)
-    stability = (
-        dfo.groupby("player", as_index=False)
-        .agg(mean_pts=("total_pts", "mean"), std_pts=("total_pts", "std"), maps=("total_pts", "count"))
-    )
-    stability["std_pts"] = pd.to_numeric(stability["std_pts"], errors="coerce").fillna(0.0)
+    # V7: Poangfordelning per karttyp (boxplot)
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    if not stability.empty:
-        base = stability[stability["maps"] >= 3]
-        ax.scatter(base["std_pts"], base["mean_pts"], s=28, alpha=0.55, color="#5D6D7E")
-        label_candidates = base.sort_values("mean_pts", ascending=False).head(8)
-        for row in label_candidates.itertuples(index=False):
-            ax.annotate(str(row.player), (float(row.std_pts), float(row.mean_pts)), fontsize=8)
-        ax.set_xlabel("Std-avvikelse i poang (lagre = stabilare)")
-        ax.set_ylabel("Snittpoang per karta")
+    box_data = [
+        dfo[dfo["mode3"] == "Moving"]["total_pts"].tolist(),
+        dfo[dfo["mode3"] == "No move"]["total_pts"].tolist(),
+        dfo[dfo["mode3"] == "NMPZ"]["total_pts"].tolist(),
+    ]
+    if any(len(b) > 0 for b in box_data):
+        ax.boxplot(box_data, labels=["Moving", "No move", "NMPZ"], showfliers=False)
+        ax.set_ylabel("GeoGuessr-poäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V8: Stabilitet vs niva per spelare")
+    ax.set_title("V7: Poängfördelning per karttyp")
+    v7_path = _save_fig(fig, "V7_poangfordelning_karttyp_boxplot.png")
+
+    # V8: Stabilitet vs niva (std mot snitt)
+    stab = (
+        dfo.groupby("player", as_index=False)
+        .agg(
+            mean_pts=("total_pts", "mean"),
+            std_pts=("total_pts", "std"),
+            maps=("week_map_key", "nunique"),
+        )
+    )
+    stab["std_pts"] = pd.to_numeric(stab["std_pts"], errors="coerce").fillna(0.0)
+    outliers_v8 = _detect_outlier_players(stab, "std_pts", "mean_pts")
+    label_players_v8 = (set(stab["player"].astype(str).tolist()) & qualified_players) | outliers_v8
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if not stab.empty:
+        ax.scatter(stab["std_pts"].tolist(), stab["mean_pts"].tolist(), color="#2A77D4", alpha=0.6, s=30)
+        for row in stab.itertuples(index=False):
+            p = str(row.player)
+            if p in label_players_v8:
+                ax.annotate(p, (float(row.std_pts), float(row.mean_pts)), fontsize=7)
+        ax.set_xlabel("Standardavvikelse i poäng")
+        ax.set_ylabel("Snitt GeoGuessr-poäng")
+    else:
+        _empty_plot(ax)
+    ax.set_title("V8: Stabilitet vs nivå (std mot snittpoäng)")
     v8_path = _save_fig(fig, "V8_stabilitet_vs_niva.png")
 
-    # V9: Veckotrend (slope)
-    trend_base = dfo.copy()
-    trend_base["week_idx"] = trend_base["week"].map(week_index).fillna(-1).astype(int)
-    per_pw = (
-        trend_base[trend_base["week_idx"] >= 0]
-        .groupby(["player", "week_idx"], as_index=False)
+    # V9: Veckotrend-heatmap
+    week_player = (
+        dfo.groupby(["player", "week"], as_index=False)
         .agg(avg_pts=("total_pts", "mean"))
     )
-    trend_rows: List[Tuple[str, float]] = []
-    for player, grp in per_pw.groupby("player"):
-        if len(grp) < 2:
-            continue
-        x = grp["week_idx"].to_numpy(dtype=float)
-        y = grp["avg_pts"].to_numpy(dtype=float)
-        slope = float(np.polyfit(x, y, 1)[0])
-        trend_rows.append((str(player), slope))
-    trend_df = pd.DataFrame(trend_rows, columns=["player", "slope"])
-    if not trend_df.empty:
-        up = trend_df.sort_values("slope", ascending=False).head(5)
-        down = trend_df.sort_values("slope", ascending=True).head(5)
-        trend_plot = pd.concat([up, down], ignore_index=True)
+    if qualified_players:
+        v9_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
     else:
-        trend_plot = pd.DataFrame(columns=["player", "slope"])
+        v9_players = (
+            dfo.groupby("player", as_index=False)
+            .agg(maps=("week_map_key", "nunique"))
+            .sort_values("maps", ascending=False)["player"]
+            .astype(str).head(30).tolist()
+        )
+    v9_pivot = (
+        week_player.pivot_table(index="player", columns="week", values="avg_pts", aggfunc="mean")
+        .reindex(index=v9_players, columns=weeks_order)
+    )
     fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    if not trend_plot.empty:
-        xs = list(range(len(trend_plot)))
-        colors = ["#279B70" if x >= 0 else "#C94F7C" for x in trend_plot["slope"].tolist()]
-        ax.bar(xs, trend_plot["slope"].tolist(), color=colors)
-        ax.axhline(0.0, color="#333333", linewidth=1)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(trend_plot["player"].tolist(), rotation=30, ha="right")
-        ax.set_ylabel("Poangtrend per vecka")
+    if not v9_pivot.empty:
+        centered = v9_pivot.sub(v9_pivot.mean(axis=1), axis=0).fillna(0.0)
+        im = ax.imshow(centered.values, aspect="auto", cmap="RdYlGn")
+        ax.set_xticks(list(range(len(weeks_order))))
+        ax.set_xticklabels([str(w) for w in weeks_order], rotation=30, ha="right", fontsize=8)
+        ax.set_yticks(list(range(len(centered.index))))
+        ax.set_yticklabels([str(p) for p in centered.index], fontsize=7)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Över/under eget snitt")
     else:
         _empty_plot(ax)
-    ax.set_title("V9: Veckotrend (forbattring/forsamring)")
-    v9_path = _save_fig(fig, "V9_veckotrend.png")
+    ax.set_title("V9: Veckotrend-heatmap (över/under eget snitt)")
+    v9_path = _save_fig(fig, "V9_veckotrend_heatmap.png")
 
-    # V10: PCA spelarmonster
-    feature_rows: List[dict] = []
+    # V10: PCA med loadings
+    feat_rows: List[dict] = []
     for player, grp in dfo.groupby("player"):
-        row = {"player": str(player)}
-        for cat in ["Moving", "No move", "NMPZ", "Sverige"]:
-            sub = grp[grp["slot_key"].isin(cat_slots[cat])]
-            row[f"avg_pts_{cat}"] = float(sub["total_pts"].mean()) if not sub.empty else 0.0
-        row["avg_time"] = float(grp["total_time"].mean()) if not grp.empty else 0.0
-        row["std_pts"] = float(grp["total_pts"].std()) if len(grp) > 1 else 0.0
-        row["maps"] = int(len(grp))
-        feature_rows.append(row)
-    feat_df = pd.DataFrame(feature_rows)
-    fig, ax = plt.subplots(figsize=(8.6, 4.8))
-    if not feat_df.empty:
-        feat_df = feat_df[feat_df["maps"] >= 4].copy()
+        entry = {"player": str(player)}
+        for cat, slots in cat_slots.items():
+            sub = grp[grp["slot_key"].isin(slots)]
+            entry[f"avg_pts_{cat}"] = float(sub["total_pts"].mean()) if not sub.empty else 0.0
+        entry["avg_time_min"] = float(grp["total_time"].mean()) / 60.0 if not grp.empty else 0.0
+        entry["std_pts"] = float(grp["total_pts"].std()) if len(grp) > 1 else 0.0
+        entry["maps"] = int(grp["week_map_key"].nunique())
+        feat_rows.append(entry)
+    feat_df = pd.DataFrame(feat_rows)
+    feature_cols = ["avg_pts_Moving", "avg_pts_No move", "avg_pts_NMPZ", "avg_pts_Sverige", "avg_time_min", "std_pts"]
+
+    fig = plt.figure(figsize=(10.2, 5.2))
+    gs = fig.add_gridspec(2, 2, width_ratios=[2.1, 1.0], wspace=0.34, hspace=0.34)
+    ax_sc = fig.add_subplot(gs[:, 0])
+    ax_l1 = fig.add_subplot(gs[0, 1])
+    ax_l2 = fig.add_subplot(gs[1, 1])
+
     if not feat_df.empty and len(feat_df) >= 3:
-        feat_cols = ["avg_pts_Moving", "avg_pts_No move", "avg_pts_NMPZ", "avg_pts_Sverige", "avg_time", "std_pts"]
-        x_mat = feat_df[feat_cols].to_numpy(dtype=float)
+        feat_df = feat_df[feat_df["maps"] >= min_maps_for_labels].copy()
+        if feat_df.empty:
+            feat_df = pd.DataFrame(feat_rows)
+        x_mat = feat_df[feature_cols].to_numpy(dtype=float)
         x_center = x_mat - x_mat.mean(axis=0, keepdims=True)
-        denom = x_center.std(axis=0, keepdims=True)
-        denom[denom == 0] = 1.0
-        x_norm = x_center / denom
+        scale = x_center.std(axis=0, keepdims=True)
+        scale[scale == 0] = 1.0
+        x_norm = x_center / scale
+
         _, svals, vt = np.linalg.svd(x_norm, full_matrices=False)
         pcs = x_norm @ vt.T[:, :2]
-        explained = (svals ** 2)
-        explained_ratio = explained / explained.sum() if explained.sum() > 0 else explained
         feat_df["pc1"] = pcs[:, 0]
         feat_df["pc2"] = pcs[:, 1]
-        total_pts_map = (
-            df_total.set_index("player")["total_pts"].to_dict()
-            if "player" in df_total.columns and "total_pts" in df_total.columns else {}
+
+        exp = svals * svals
+        exp_ratio = exp / exp.sum() if exp.sum() > 0 else exp
+        pc1_pct = float(exp_ratio[0] * 100.0) if len(exp_ratio) > 0 else 0.0
+        pc2_pct = float(exp_ratio[1] * 100.0) if len(exp_ratio) > 1 else 0.0
+
+        colors = [float(total_pts_dict.get(str(p), 0.0)) for p in feat_df["player"].tolist()]
+        sc = ax_sc.scatter(feat_df["pc1"], feat_df["pc2"], c=colors, cmap="viridis", s=50, alpha=0.85)
+        fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label="Total råpoäng")
+
+        outliers_pc = _detect_outlier_players(feat_df, "pc1", "pc2")
+        label_pc = (set(feat_df["player"].astype(str).tolist()) & qualified_players) | outliers_pc
+        for row in feat_df.itertuples(index=False):
+            p = str(row.player)
+            if p in label_pc:
+                ax_sc.annotate(p, (float(row.pc1), float(row.pc2)), fontsize=7)
+        ax_sc.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
+        ax_sc.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
+        ax_sc.set_title("Spelare i PCA-rum")
+
+        load_pc1 = list(zip(feature_cols, vt[0, :len(feature_cols)]))
+        load_pc2 = list(zip(feature_cols, vt[1, :len(feature_cols)] if vt.shape[0] > 1 else np.zeros(len(feature_cols))))
+        load_pc1 = sorted(load_pc1, key=lambda x: abs(float(x[1])), reverse=True)
+        load_pc2 = sorted(load_pc2, key=lambda x: abs(float(x[1])), reverse=True)
+
+        y1 = list(range(len(load_pc1)))
+        ax_l1.barh(y1, [float(x[1]) for x in load_pc1], color="#2A77D4")
+        ax_l1.set_yticks(y1)
+        ax_l1.set_yticklabels([str(x[0]) for x in load_pc1], fontsize=7)
+        ax_l1.invert_yaxis()
+        ax_l1.set_title("PC1 bidrag (loading)")
+
+        y2 = list(range(len(load_pc2)))
+        ax_l2.barh(y2, [float(x[1]) for x in load_pc2], color="#279B70")
+        ax_l2.set_yticks(y2)
+        ax_l2.set_yticklabels([str(x[0]) for x in load_pc2], fontsize=7)
+        ax_l2.invert_yaxis()
+        ax_l2.set_title("PC2 bidrag (loading)")
+    else:
+        _empty_plot(ax_sc)
+        _empty_plot(ax_l1)
+        _empty_plot(ax_l2)
+    fig.suptitle("V10: PCA spelarmönster + bidrag till PC1/PC2", fontsize=12, y=0.99)
+    v10_path = _save_fig(fig, "V10_pca_spelarmonster_loadings.png")
+
+    # V11: Standardavvikelse per karttyp och spelare
+    std_by_mode = (
+        dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
+        .groupby(["player", "mode3"], as_index=False)
+        .agg(std_pts=("total_pts", "std"))
+    )
+    std_by_mode["std_pts"] = pd.to_numeric(std_by_mode["std_pts"], errors="coerce").fillna(0.0)
+    if qualified_players:
+        v11_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
+    else:
+        v11_players = (
+            dfo.groupby("player", as_index=False)
+            .agg(maps=("week_map_key", "nunique"))
+            .sort_values("maps", ascending=False)["player"]
+            .astype(str).head(30).tolist()
         )
-        colors = [float(total_pts_map.get(str(p), 0.0)) for p in feat_df["player"].tolist()]
-        sc = ax.scatter(feat_df["pc1"], feat_df["pc2"], c=colors, cmap="viridis", s=50, alpha=0.85)
-        fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="Total råpoäng")
-        label_df = feat_df.sort_values("maps", ascending=False).head(10)
-        for row in label_df.itertuples(index=False):
-            ax.annotate(str(row.player), (float(row.pc1), float(row.pc2)), fontsize=8)
-        pc1_pct = float(explained_ratio[0] * 100.0) if len(explained_ratio) > 0 else 0.0
-        pc2_pct = float(explained_ratio[1] * 100.0) if len(explained_ratio) > 1 else 0.0
-        ax.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
-        ax.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
+    v11_pivot = (
+        std_by_mode.pivot_table(index="player", columns="mode3", values="std_pts", aggfunc="mean")
+        .reindex(v11_players)
+        .fillna(0.0)
+    )
+    for col in ["Moving", "No move", "NMPZ"]:
+        if col not in v11_pivot.columns:
+            v11_pivot[col] = 0.0
+    v11_pivot = v11_pivot[["Moving", "No move", "NMPZ"]]
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
+    if not v11_pivot.empty:
+        im = ax.imshow(v11_pivot.values, aspect="auto", cmap="OrRd")
+        ax.set_xticks([0, 1, 2])
+        ax.set_xticklabels(["Moving", "No move", "NMPZ"])
+        ax.set_yticks(list(range(len(v11_pivot.index))))
+        ax.set_yticklabels([str(p) for p in v11_pivot.index], fontsize=7)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Std i poäng")
     else:
         _empty_plot(ax)
-    ax.set_title("V10: PCA spelarmonster")
-    v10_path = _save_fig(fig, "V10_pca_spelarmonster.png")
+    ax.set_title("V11: Standardavvikelse per karttyp och spelare")
+    v11_path = _save_fig(fig, "V11_std_per_karttyp_spelare.png")
 
-    image_slots = [
-        (v1_path, "A8"),
-        (v2_path, "N8"),
-        (v3_path, "A27"),
-        (v4_path, "N27"),
-        (v5_path, "A46"),
-        (v6_path, "N46"),
-        (v7_path, "A65"),
-        (v8_path, "N65"),
-        (v9_path, "A84"),
-        (v10_path, "N84"),
+    # Place images lower so top text never gets covered.
+    anchors: List[str] = []
+    first_row = 20
+    row_step = 19
+    for i in range(7):
+        r = first_row + i * row_step
+        anchors.append(f"A{r}")
+        anchors.append(f"N{r}")
+
+    image_paths: List[Path] = [
+        v1_paths[0],
+        v1_paths[1],
+        v1_paths[2],
+        v2_path,
+        v3_path,
+        v4_path,
+        v5_path,
+        v6_path,
+        v7_path,
+        v8_path,
+        v9_path,
+        v10_path,
+        v11_path,
     ]
-    for img_path, anchor in image_slots:
-        _insert_image(img_path, anchor)
 
-    ws["A106"] = f"Bilder sparade i: {image_dir}"
-    ws["A106"].font = Font(color="4F4F4F", italic=True)
+    for idx, img_path in enumerate(image_paths):
+        if idx >= len(anchors):
+            break
+        _insert_image(img_path, anchors[idx], width=620, height=320)
+
+    info_row = first_row + 7 * row_step + 3
+    ws[f"A{info_row}"] = f"Bilder sparade i: {image_dir}"
+    ws[f"A{info_row}"].font = Font(color="4F4F4F", italic=True)
+    ws[f"A{info_row+1}"] = f"Namn i scatter: spelare med minst {min_maps_for_labels}/{total_maps} kartor (>=75%) samt outliers."
+    ws[f"A{info_row+1}"].font = Font(color="4F4F4F", italic=True)
 
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:

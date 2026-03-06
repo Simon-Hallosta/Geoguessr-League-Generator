@@ -14,6 +14,17 @@ if not exist ".venv-win\Scripts\python.exe" (
   exit /b 1
 )
 
+".venv-win\Scripts\python.exe" -c "import matplotlib, matplotlib.pyplot" >nul 2>&1
+if errorlevel 1 (
+  echo [INFO] matplotlib saknas i .venv-win. Installerar...
+  ".venv-win\Scripts\python.exe" -m pip install --disable-pip-version-check matplotlib
+  if errorlevel 1 (
+    echo [ERROR] Kunde inte installera matplotlib.
+    popd >nul
+    exit /b 1
+  )
+)
+
 set "WORKPATH=%LOCALAPPDATA%\Temp\GeoLeagueBuilder_build"
 set "EXE_NAME=GeoLeagueBuilder"
 
@@ -37,6 +48,8 @@ if exist "dist\GeoLeagueBuilder.exe" (
   --workpath "%WORKPATH%" ^
   --icon "desktop_app\assets\geoleague.ico" ^
   --name "!EXE_NAME!" ^
+  --hidden-import matplotlib ^
+  --hidden-import matplotlib.pyplot ^
   --exclude-module scipy ^
   --exclude-module PyQt5 ^
   --exclude-module PySide6 ^

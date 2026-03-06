@@ -1484,7 +1484,10 @@ def write_visualizations_sheet(
         ws[f"A{i}"] = txt
         ws[f"A{i}"].font = Font(color="1B314B")
 
-    set_col_widths(ws, {1: 58.0, 2: 14.0, 13: 4.0, 14: 58.0})
+    widths = {1: 52.0, 14: 52.0}
+    for c in range(2, 14):
+        widths[c] = 5.2
+    set_col_widths(ws, widths)
 
     if df_overview.empty or df_total.empty:
         ws["A16"] = "Ingen data tillgänglig för visualiseringar."
@@ -1517,6 +1520,16 @@ def write_visualizations_sheet(
 
     BASE_FIG_W = 12.0
     BASE_FIG_H = 9.0  # 4:3
+    plt.rcParams.update(
+        {
+            "font.size": 13,
+            "axes.titlesize": 16,
+            "axes.labelsize": 14,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "legend.fontsize": 11,
+        }
+    )
 
     def _save_fig(fig, filename: str) -> Path:
         fig.tight_layout()
@@ -1546,7 +1559,7 @@ def write_visualizations_sheet(
             return set()
         return set(points_df.loc[mask, "player"].astype(str).tolist())
 
-    def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 7) -> None:
+    def _annotate_all_points(ax, x_vals: List[float], y_vals: List[float], labels: List[str], fontsize: int = 9) -> None:
         offsets = [(0, 0), (4, 2), (-4, 2), (4, -2), (-4, -2), (0, 4), (0, -4)]
         for i, (xv, yv, label) in enumerate(zip(x_vals, y_vals, labels)):
             dx, dy = offsets[i % len(offsets)]
@@ -1650,11 +1663,11 @@ def write_visualizations_sheet(
                 [float(x) for x in by_player["mean_time_min"].tolist()],
                 [float(x) for x in by_player["mean_pts"].tolist()],
                 [str(x) for x in by_player["player"].tolist()],
-                fontsize=7,
+                fontsize=9,
             )
             ax.set_xlabel("Tid per karta (min)")
             ax.set_ylabel("GeoGuessr-poäng")
-            ax.legend(loc="best", fontsize=7, frameon=True)
+            ax.legend(loc="best", fontsize=10, frameon=True)
         else:
             _empty_plot(ax)
         ax.set_title(f"{tag}: Tid vs poäng ({mode_name})")
@@ -1679,7 +1692,7 @@ def write_visualizations_sheet(
         ys = list(range(len(labels_rev)))
         ax.barh(ys, vals_rev, color="#279B70")
         ax.set_yticks(ys)
-        ax.set_yticklabels(labels_rev, fontsize=8)
+        ax.set_yticklabels(labels_rev, fontsize=10)
         ax.set_ylabel("Spelare")
         ax.set_xlabel("GeoGuessr-poäng")
     else:
@@ -1722,7 +1735,7 @@ def write_visualizations_sheet(
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
         ax.set_yticks(list(range(len(v3_pivot.index))))
-        ax.set_yticklabels([str(p) for p in v3_pivot.index], fontsize=7)
+        ax.set_yticklabels([str(p) for p in v3_pivot.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Snittpoäng")
     else:
         _empty_plot(ax)
@@ -1803,9 +1816,9 @@ def write_visualizations_sheet(
         ax.bar(xs, v6_pivot["No move"].tolist(), width=w, label="No move", color="#279B70")
         ax.bar(xs + w, v6_pivot["NMPZ"].tolist(), width=w, label="NMPZ", color="#7A67D8")
         ax.set_xticks(xs)
-        ax.set_xticklabels([str(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=8)
+        ax.set_xticklabels([str(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=10)
         ax.set_ylabel("Snitt GeoGuessr-poäng")
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=10)
     else:
         _empty_plot(ax)
     ax.set_title("V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)")
@@ -1844,7 +1857,7 @@ def write_visualizations_sheet(
             [float(x) for x in stab["std_pts"].tolist()],
             [float(x) for x in stab["mean_pts"].tolist()],
             [str(x) for x in stab["player"].tolist()],
-            fontsize=7,
+            fontsize=9,
         )
         ax.set_xlabel("Standardavvikelse i poäng")
         ax.set_ylabel("Snitt GeoGuessr-poäng")
@@ -1879,9 +1892,9 @@ def write_visualizations_sheet(
         centered = v9_pivot.sub(v9_pivot.mean(axis=1), axis=0).fillna(0.0)
         im = ax.imshow(centered.values, aspect="auto", cmap="RdYlGn")
         ax.set_xticks(list(range(len(weeks_order))))
-        ax.set_xticklabels([str(w) for w in weeks_order], rotation=30, ha="right", fontsize=8)
+        ax.set_xticklabels([str(w) for w in weeks_order], rotation=30, ha="right", fontsize=10)
         ax.set_yticks(list(range(len(centered.index))))
-        ax.set_yticklabels([str(p) for p in centered.index], fontsize=7)
+        ax.set_yticklabels([str(p) for p in centered.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Över/under eget snitt")
     else:
         _empty_plot(ax)
@@ -1940,7 +1953,7 @@ def write_visualizations_sheet(
             [float(x) for x in feat_df["pc1"].tolist()],
             [float(x) for x in feat_df["pc2"].tolist()],
             [str(x) for x in feat_df["player"].tolist()],
-            fontsize=7,
+            fontsize=9,
         )
         ax_sc.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
         ax_sc.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
@@ -1954,14 +1967,14 @@ def write_visualizations_sheet(
         y1 = list(range(len(load_pc1)))
         ax_l1.barh(y1, [float(x[1]) for x in load_pc1], color="#2A77D4")
         ax_l1.set_yticks(y1)
-        ax_l1.set_yticklabels([str(x[0]) for x in load_pc1], fontsize=7)
+        ax_l1.set_yticklabels([str(x[0]) for x in load_pc1], fontsize=9)
         ax_l1.invert_yaxis()
         ax_l1.set_title("PC1 bidrag (loading)")
 
         y2 = list(range(len(load_pc2)))
         ax_l2.barh(y2, [float(x[1]) for x in load_pc2], color="#279B70")
         ax_l2.set_yticks(y2)
-        ax_l2.set_yticklabels([str(x[0]) for x in load_pc2], fontsize=7)
+        ax_l2.set_yticklabels([str(x[0]) for x in load_pc2], fontsize=9)
         ax_l2.invert_yaxis()
         ax_l2.set_title("PC2 bidrag (loading)")
     else:
@@ -2005,7 +2018,7 @@ def write_visualizations_sheet(
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
         ax.set_yticks(list(range(len(v11_pivot.index))))
-        ax.set_yticklabels([str(p) for p in v11_pivot.index], fontsize=7)
+        ax.set_yticklabels([str(p) for p in v11_pivot.index], fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Std i poäng")
     else:
         _empty_plot(ax)
@@ -2015,7 +2028,7 @@ def write_visualizations_sheet(
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
     first_row = 18
-    row_step = 27
+    row_step = 31
     for i in range(7):
         r = first_row + i * row_step
         anchors.append(f"A{r}")

@@ -123,6 +123,9 @@ class Entry:
     player: str
     total_pts: int
     total_time: int  # tie-breaker within map
+    best_round_pts: int
+    best_round_time: int
+    fastest_5000_round_time: Optional[int]
     played_at_epoch: Optional[int]  # optional, for deadline filtering
 
 
@@ -405,6 +408,129 @@ def map_name_from_item(item: dict) -> str:
     except Exception:
         pass
     return ""
+
+
+def _extract_score_amount(obj: Any) -> Optional[int]:
+    if not isinstance(obj, dict):
+        return None
+    for k in ("amount", "value", "points", "score"):
+        if k in obj:
+            v = _parse_int_maybe(obj.get(k))
+            if v is not None:
+                return v
+    return None
+
+
+def _normalize_round_time_seconds(v: Optional[int]) -> Optional[int]:
+    if v is None or v < 0:
+        return None
+    # Heuristic: very large values are likely milliseconds.
+    if v >= 10000:
+        return max(0, int(round(v / 1000.0)))
+    return v
+
+
+def _extract_round_points_from_guess(guess: dict) -> Optional[int]:
+    candidates = [
+        guess.get("roundScoreInPoints"),
+        guess.get("scoreInPoints"),
+        guess.get("points"),
+        guess.get("score"),
+        guess.get("roundScore"),
+        guess.get("totalScoreInPoints"),
+    ]
+    for cand in candidates:
+        v = _parse_int_maybe(cand)
+        if v is not None:
+            return v
+        v2 = _extract_score_amount(cand)
+        if v2 is not None:
+            return v2
+
+    # Some schemas may nest values one level below.
+    for key in ("player", "guess", "result"):
+        sub = guess.get(key)
+        if isinstance(sub, dict):
+            v = _extract_round_points_from_guess(sub)
+            if v is not None:
+                return v
+    return None
+
+
+def _extract_round_time_from_guess(guess: dict) -> Optional[int]:
+    candidates = [
+        guess.get("time"),
+        guess.get("timeTaken"),
+        guess.get("timeSpent"),
+        guess.get("timeInSeconds"),
+        guess.get("roundTime"),
+        guess.get("duration"),
+        guess.get("elapsedTime"),
+        guess.get("seconds"),
+    ]
+    for cand in candidates:
+        v = _parse_int_maybe(cand)
+        if v is not None:
+            return _normalize_round_time_seconds(v)
+        v2 = _extract_score_amount(cand)
+        if v2 is not None:
+            return _normalize_round_time_seconds(v2)
+
+    for key in ("player", "guess", "result"):
+        sub = guess.get(key)
+        if isinstance(sub, dict):
+            v = _extract_round_time_from_guess(sub)
+            if v is not None:
+                return v
+    return None
+
+
+def extract_round_stats_from_item(item: dict) -> Tuple[int, int, Optional[int]]:
+    """
+    Returns:
+      (best_round_pts, best_round_time_sec, fastest_5000_round_time_sec_or_none)
+    """
+    game = item.get("game") if isinstance(item, dict) else None
+    if not isinstance(game, dict):
+        return 0, 10**12, None
+
+    player_obj = game.get("player")
+    candidate_lists: List[Any] = []
+    if isinstance(player_obj, dict):
+        candidate_lists.extend(
+            [
+                player_obj.get("guesses"),
+                player_obj.get("rounds"),
+                player_obj.get("guessResults"),
+            ]
+        )
+    candidate_lists.extend([game.get("rounds"), game.get("guesses"), item.get("rounds")])
+
+    rounds: List[Tuple[int, int]] = []
+    for cand in candidate_lists:
+        if not isinstance(cand, list):
+            continue
+        for guess in cand:
+            if not isinstance(guess, dict):
+                continue
+            pts = _extract_round_points_from_guess(guess)
+            if pts is None:
+                continue
+            t = _extract_round_time_from_guess(guess)
+            if t is None:
+                t = 10**12
+            rounds.append((int(pts), int(t)))
+        if rounds:
+            break
+
+    if not rounds:
+        return 0, 10**12, None
+
+    best_pts = max(p for p, _ in rounds)
+    best_time = min(t for p, t in rounds if p == best_pts)
+    times_5000 = [t for p, t in rounds if p >= 5000]
+    fastest_5000 = min(times_5000) if times_5000 else None
+    return int(best_pts), int(best_time), (int(fastest_5000) if fastest_5000 is not None else None)
 
 
 # ============================================================
@@ -833,6 +959,7 @@ def build_week_entries(
                 continue
             pts = total_points_from_item(it)
             ttime = total_time_from_item(it)
+            best_round_pts, best_round_time, fastest_5000_round_time = extract_round_stats_from_item(it)
 
             # played_at: requires extra call using game token
             played_at: Optional[int] = None
@@ -863,6 +990,9 @@ def build_week_entries(
                     player=name,
                     total_pts=pts,
                     total_time=ttime,
+                    best_round_pts=best_round_pts,
+                    best_round_time=best_round_time,
+                    fastest_5000_round_time=fastest_5000_round_time,
                     played_at_epoch=played_at,
                 )
             )
@@ -925,7 +1055,26 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
         else:
             df_week_meta = pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"])
         return (
-            pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text", "slot_key", "slot_label", "player", "total_pts", "total_time", "rank_best", "borda_points", "played_at_epoch"]),
+            pd.DataFrame(
+                columns=[
+                    "week",
+                    "map_index",
+                    "map_url",
+                    "map_name",
+                    "rule_text",
+                    "slot_key",
+                    "slot_label",
+                    "player",
+                    "total_pts",
+                    "total_time",
+                    "best_round_pts",
+                    "best_round_time",
+                    "fastest_5000_round_time",
+                    "rank_best",
+                    "borda_points",
+                    "played_at_epoch",
+                ]
+            ),
             pd.DataFrame(columns=["week", "player", "weekly_borda", "weekly_total_pts", "maps_counted"]),
             df_week_meta,
         )
@@ -940,6 +1089,9 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
         "player": e.player,
         "total_pts": e.total_pts,
         "total_time": e.total_time,
+        "best_round_pts": e.best_round_pts,
+        "best_round_time": e.best_round_time,
+        "fastest_5000_round_time": e.fastest_5000_round_time,
         "played_at_epoch": e.played_at_epoch,
     } for e in entries])
     df["slot_key"] = df["map_index"].apply(map_slot_key)
@@ -1170,6 +1322,100 @@ def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFram
             .reset_index(drop=True)
         )
         out[league_name] = table
+    return out
+
+
+def _clean_round_time_for_table(v: Any) -> Optional[int]:
+    iv = _parse_int_maybe(v)
+    if iv is None:
+        return None
+    if iv >= 10**11:
+        return None
+    return int(iv)
+
+
+def compute_fast_round_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """
+    Per player/category:
+      - if player has at least one 5000 round: pick fastest such round
+      - otherwise pick player's highest single-round score
+    """
+    out: Dict[str, pd.DataFrame] = {}
+    cat_slots = {
+        "Sverige": ["moving_1", "no_move_2"],
+        "Världen": ["moving_2", "no_move_1", "nmpz_1", "nmpz_2"],
+    }
+    base_cols = ["player", "round_pts", "round_time", "result_type"]
+
+    if df_overview.empty:
+        for k in cat_slots:
+            out[k] = pd.DataFrame(columns=base_cols)
+        return out
+
+    dfo = df_overview.copy()
+    if "slot_key" not in dfo.columns:
+        dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+
+    dfo["total_pts"] = pd.to_numeric(dfo.get("total_pts"), errors="coerce").fillna(0.0)
+    dfo["best_round_pts"] = pd.to_numeric(dfo.get("best_round_pts"), errors="coerce").fillna(0.0)
+    dfo["best_round_time"] = pd.to_numeric(dfo.get("best_round_time"), errors="coerce").fillna(10**12)
+    dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
+
+    for cat_name, slots in cat_slots.items():
+        part = dfo[dfo["slot_key"].isin(slots)]
+        if part.empty:
+            out[cat_name] = pd.DataFrame(columns=base_cols)
+            continue
+
+        rows: List[dict] = []
+        for player, grp in part.groupby("player", sort=False):
+            g = grp.copy()
+            g5000 = g[g["fastest_5000_round_time"].notna()].copy()
+
+            if not g5000.empty:
+                g5000 = g5000.sort_values(
+                    ["fastest_5000_round_time", "best_round_time", "total_pts"],
+                    ascending=[True, True, False],
+                )
+                pick = g5000.iloc[0]
+                rows.append(
+                    {
+                        "player": str(player),
+                        "round_pts": 5000,
+                        "round_time": _clean_round_time_for_table(pick.get("fastest_5000_round_time")),
+                        "result_type": "5000",
+                    }
+                )
+                continue
+
+            g = g.sort_values(
+                ["best_round_pts", "best_round_time", "total_pts"],
+                ascending=[False, True, False],
+            )
+            pick = g.iloc[0]
+            rows.append(
+                {
+                    "player": str(player),
+                    "round_pts": int(_parse_int_maybe(pick.get("best_round_pts")) or 0),
+                    "round_time": _clean_round_time_for_table(pick.get("best_round_time")),
+                    "result_type": "Högsta runda",
+                }
+            )
+
+        table = pd.DataFrame(rows, columns=base_cols)
+        if not table.empty:
+            table["has_5000"] = table["result_type"].eq("5000")
+            table["round_time_sort"] = pd.to_numeric(table["round_time"], errors="coerce").fillna(10**12)
+            table = (
+                table.sort_values(
+                    ["has_5000", "round_pts", "round_time_sort", "player"],
+                    ascending=[False, False, True, True],
+                )
+                .drop(columns=["has_5000", "round_time_sort"])
+                .reset_index(drop=True)
+            )
+        out[cat_name] = table
+
     return out
 
 
@@ -2100,8 +2346,10 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     set_col_widths(ws, widths)
 
     tables = compute_subleague_tables(df_overview)
+    fast_tables = compute_fast_round_tables(df_overview)
     section_row = 3
     headers = ["#", "Spelare", "Poäng", "Total pts", "Kartor", "Veckor"]
+    first_section_max_rows = 0
 
     for i, league_name in enumerate(leagues):
         start_col = 1 + i * (block_cols + gap_cols)
@@ -2116,6 +2364,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
 
         data_start_row = section_row + 2
         table = tables.get(league_name, pd.DataFrame())
+        first_section_max_rows = max(first_section_max_rows, len(table))
         for idx, row in enumerate(table.itertuples(index=False), start=1):
             r = data_start_row + (idx - 1)
             base_fill = ROW_A if (idx % 2 == 1) else ROW_B
@@ -2131,6 +2380,52 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
                 align = LEFT if c == 2 else CENTER
                 if c == start_col + 1:
                     align = LEFT
+                font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
+                style_cell(ws, r, c, fill=fill, font=font, align=align)
+
+    # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
+    fast_section_row = section_row + 2 + first_section_max_rows + 3
+    fast_headers = ["#", "Spelare", "Runda pts", "Tid (s)", "Typ"]
+    fast_leagues = ["Sverige", "Världen"]
+    fast_block_cols = len(fast_headers)
+    fast_gap_cols = 2
+
+    for i, fast_name in enumerate(fast_leagues):
+        start_col = 1 + i * (fast_block_cols + fast_gap_cols)
+        end_col = start_col + fast_block_cols - 1
+        merge_and_style(
+            ws,
+            fast_section_row,
+            start_col,
+            fast_section_row,
+            end_col,
+            f"Snabbaste 5000 - {fast_name}",
+            fill=MID,
+            font=FONT_HDR_MED,
+            align=CENTER,
+        )
+
+        header_row = fast_section_row + 1
+        for j, h in enumerate(fast_headers):
+            c = start_col + j
+            ws.cell(header_row, c).value = h
+            style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
+
+        table = fast_tables.get(fast_name, pd.DataFrame())
+        data_start_row = fast_section_row + 2
+        for idx, row in enumerate(table.itertuples(index=False), start=1):
+            r = data_start_row + (idx - 1)
+            base_fill = ROW_A if (idx % 2 == 1) else ROW_B
+            fill = rank_row_fill(idx, base_fill)
+            ws.cell(r, start_col + 0).value = idx
+            ws.cell(r, start_col + 1).value = row.player
+            ws.cell(r, start_col + 2).value = int(_parse_int_maybe(row.round_pts) or 0)
+            tval = _parse_int_maybe(row.round_time)
+            ws.cell(r, start_col + 3).value = int(tval) if tval is not None else ""
+            ws.cell(r, start_col + 4).value = row.result_type
+
+            for c in range(start_col, end_col + 1):
+                align = LEFT if c in (start_col + 1, start_col + 4) else CENTER
                 font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
                 style_cell(ws, r, c, fill=fill, font=font, align=align)
 

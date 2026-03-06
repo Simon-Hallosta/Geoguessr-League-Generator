@@ -1489,6 +1489,8 @@ def write_visualizations_sheet(wb: Workbook, df_overview: pd.DataFrame, df_total
         chart.title = title
         chart.width = 10.8
         chart.height = 6.6
+        # Data tables are placed in hidden columns; ensure charts still plot hidden cells.
+        chart.plot_visible_only = False
         ws.add_chart(chart, anchor)
 
     if df_overview.empty or df_total.empty:

@@ -1634,6 +1634,22 @@ def add_excel_table(
         n += 1
         name = f"{base}_{n}"
 
+    # Give room for Excel's filter/sort dropdown glyph in header cells.
+    for c in range(start_col, end_col + 1):
+        col_letter = get_column_letter(c)
+        dim = ws.column_dimensions[col_letter]
+        current_w = float(dim.width) if dim.width is not None else 8.43
+        grow = 2.2 if current_w < 12.0 else 1.0
+        dim.width = current_w + grow
+
+        hdr = ws.cell(header_row, c)
+        old = hdr.alignment
+        hdr.alignment = Alignment(
+            horizontal="left",
+            vertical=(old.vertical if old is not None else "center"),
+            wrap_text=(old.wrap_text if old is not None else False),
+        )
+
     ref = f"{get_column_letter(start_col)}{header_row}:{get_column_letter(end_col)}{end_row}"
     tbl = Table(displayName=name, ref=ref)
     tbl.tableStyleInfo = TableStyleInfo(

@@ -20,6 +20,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 try:
@@ -1584,6 +1585,68 @@ def rank_row_fill(rank: int, fallback_fill: PatternFill) -> PatternFill:
     return fallback_fill
 
 
+def _sanitize_table_name(raw: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9_]", "_", str(raw or "").strip())
+    base = re.sub(r"_+", "_", base).strip("_")
+    if not base:
+        base = "Table"
+    if not base[0].isalpha():
+        base = f"T_{base}"
+    return base[:220]
+
+
+def _collect_used_table_names(wb: Workbook) -> set[str]:
+    used: set[str] = set()
+    for ws in wb.worksheets:
+        try:
+            used.update({str(k) for k in ws.tables.keys()})
+        except Exception:
+            continue
+    return used
+
+
+def add_excel_table(
+    wb: Workbook,
+    ws,
+    *,
+    header_row: int,
+    start_col: int,
+    end_row: int,
+    end_col: int,
+    name_hint: str,
+) -> None:
+    """
+    Adds an Excel table (sortable/filterable headers) for the given range.
+    Requires at least one data row beneath the header.
+    """
+    if end_row <= header_row or end_col < start_col:
+        return
+
+    used = getattr(wb, "_table_names_used", None)
+    if used is None:
+        used = _collect_used_table_names(wb)
+        setattr(wb, "_table_names_used", used)
+
+    base = _sanitize_table_name(name_hint)
+    name = base
+    n = 1
+    while name in used:
+        n += 1
+        name = f"{base}_{n}"
+
+    ref = f"{get_column_letter(start_col)}{header_row}:{get_column_letter(end_col)}{end_row}"
+    tbl = Table(displayName=name, ref=ref)
+    tbl.tableStyleInfo = TableStyleInfo(
+        name="TableStyleLight1",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=False,
+        showColumnStripes=False,
+    )
+    ws.add_table(tbl)
+    used.add(name)
+
+
 def write_week_sheet(
     wb: Workbook,
     week_label: str,
@@ -1696,6 +1759,18 @@ def write_week_sheet(
             ws.cell(r, c).value = "" if val is None else (int(val) if abs(val - int(val)) < 1e-9 else val)
             style_cell(ws, r, c, fill=fill, font=FONT_BODY, align=CENTER)
 
+    map_end_col = (col_map_start + n_maps - 1) if n_maps > 0 else col_total
+    data_end_row = r_data_start + len(ordered) - 1
+    add_excel_table(
+        wb,
+        ws,
+        header_row=r3,
+        start_col=col_rank,
+        end_row=data_end_row,
+        end_col=map_end_col,
+        name_hint=f"Week_{week_label}",
+    )
+
 
 def write_total_sheet(
     wb: Workbook,
@@ -1757,6 +1832,16 @@ def write_total_sheet(
                     val = int(val) if abs(val - int(val)) < 1e-9 else val
             ws.cell(r, c).value = val
             style_cell(ws, r, c, fill=fill, font=FONT_BODY, align=CENTER)
+
+    add_excel_table(
+        wb,
+        ws,
+        header_row=2,
+        start_col=1,
+        end_row=2 + len(sorted_total),
+        end_col=7 + len(weeks),
+        name_hint="Total",
+    )
 
 
 def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "default") -> None:
@@ -1829,6 +1914,16 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "defa
             align = LEFT if c == 2 else CENTER
             font = Font(color="000000", bold=True) if c in (3,) else FONT_BODY
             style_cell(ws, r, c, fill=fill, font=font, align=align)
+
+    add_excel_table(
+        wb,
+        ws,
+        header_row=2,
+        start_col=1,
+        end_row=2 + len(sorted_stats),
+        end_col=22,
+        name_hint="Stats",
+    )
 
 
 def write_visualizations_sheet(
@@ -2514,6 +2609,16 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
                 font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
                 style_cell(ws, r, c, fill=fill, font=font, align=align)
 
+        add_excel_table(
+            wb,
+            ws,
+            header_row=header_row,
+            start_col=start_col,
+            end_row=header_row + len(table),
+            end_col=end_col,
+            name_hint=f"Underliga_{league_name}",
+        )
+
     # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
     fast_section_row = section_row + 2 + first_section_max_rows + 3
     fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
@@ -2557,6 +2662,16 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
                 align = LEFT if c == start_col + 1 else CENTER
                 font = Font(color="000000", bold=True) if c == start_col + 2 else FONT_BODY
                 style_cell(ws, r, c, fill=fill, font=font, align=align)
+
+        add_excel_table(
+            wb,
+            ws,
+            header_row=header_row,
+            start_col=start_col,
+            end_row=header_row + len(table),
+            end_col=end_col,
+            name_hint=f"Fast5k_{fast_name}",
+        )
 
     ws.freeze_panes = "A5"
 
@@ -2604,6 +2719,16 @@ def write_raw_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     ws.freeze_panes = "A2"
     for c_idx, h in enumerate(headers, start=1):
         ws.column_dimensions[get_column_letter(c_idx)].width = min(max(len(str(h)) + 2, 10), 40)
+
+    add_excel_table(
+        wb,
+        ws,
+        header_row=1,
+        start_col=1,
+        end_row=1 + len(df_overview),
+        end_col=len(headers),
+        name_hint="RawData",
+    )
 
 
 def _output_with_suffix(path: Path, index: int) -> Path:

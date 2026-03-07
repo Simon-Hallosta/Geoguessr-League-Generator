@@ -1614,6 +1614,7 @@ def add_excel_table(
     end_row: int,
     end_col: int,
     name_hint: str,
+    header_horizontal: str = "left",
 ) -> None:
     """
     Adds an Excel table (sortable/filterable headers) for the given range.
@@ -1645,7 +1646,7 @@ def add_excel_table(
         hdr = ws.cell(header_row, c)
         old = hdr.alignment
         hdr.alignment = Alignment(
-            horizontal="left",
+            horizontal=header_horizontal,
             vertical=(old.vertical if old is not None else "center"),
             wrap_text=(old.wrap_text if old is not None else False),
         )
@@ -1785,6 +1786,7 @@ def write_week_sheet(
         end_row=data_end_row,
         end_col=map_end_col,
         name_hint=f"Week_{week_label}",
+        header_horizontal="center",
     )
 
 

@@ -2268,10 +2268,13 @@ def write_visualizations_sheet(
     fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if v4_values:
         xs = list(range(len(v4_values)))
-        ax.plot(xs, v4_values, marker="o", color="#E0862B")
+        ax.bar(xs, v4_values, color="#F3B26B", edgecolor="#C56A12", linewidth=1.0, zorder=2)
+        ax.plot(xs, v4_values, marker="o", color="#C56A12", linewidth=2.0, zorder=3)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(x) for x in v4_labels], rotation=30, ha="right")
         ax.set_ylabel("Antal spelare")
+        ax.set_ylim(bottom=0)
+        ax.grid(axis="y", alpha=0.2, zorder=1)
     else:
         _empty_plot(ax)
     ax.set_title("V4: Aktiva spelare per vecka")

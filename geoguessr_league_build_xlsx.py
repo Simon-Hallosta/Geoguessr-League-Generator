@@ -2625,28 +2625,11 @@ def write_visualizations_sheet(
         dfo.groupby(["player", "week"], as_index=False)
         .agg(weekly_points=("borda_points", "sum"))
     )
-    if expanded_players:
-        v12_players = (
-            df_total[df_total["player"].astype(str).isin(expanded_players)]
-            .sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
-            .astype(str).head(12).tolist()
-        )
-    elif qualified_players:
-        v12_players = (
-            df_total[df_total["player"].astype(str).isin(qualified_players)]
-            .sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
-            .astype(str).head(12).tolist()
-        )
-    else:
-        v12_players = (
-            df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
-            .astype(str).head(12).tolist()
-        )
-
     all_rank_players = (
         df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
         .astype(str).tolist()
     )
+    v12_players = list(all_rank_players)
     weekly_pivot_all = (
         weekly_player_points.pivot_table(index="player", columns="week", values="weekly_points", aggfunc="sum")
         .reindex(index=all_rank_players, columns=weeks_order)

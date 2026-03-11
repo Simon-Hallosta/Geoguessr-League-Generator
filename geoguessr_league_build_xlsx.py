@@ -1338,7 +1338,7 @@ def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFram
     out: Dict[str, pd.DataFrame] = {}
     if df_overview.empty:
         for league_name in SUBLEAGUE_SLOT_KEYS:
-            out[league_name] = pd.DataFrame(columns=["player", "league_points", "total_pts", "maps_counted", "weeks_counted"])
+            out[league_name] = pd.DataFrame(columns=["player", "league_points", "avg_pts_per_map", "maps_counted", "weeks_counted"])
         return out
 
     dfo = df_overview.copy()
@@ -1348,18 +1348,18 @@ def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFram
     for league_name, slots in SUBLEAGUE_SLOT_KEYS.items():
         part = dfo[dfo["slot_key"].isin(slots)]
         if part.empty:
-            out[league_name] = pd.DataFrame(columns=["player", "league_points", "total_pts", "maps_counted", "weeks_counted"])
+            out[league_name] = pd.DataFrame(columns=["player", "league_points", "avg_pts_per_map", "maps_counted", "weeks_counted"])
             continue
 
         table = (
             part.groupby("player", as_index=False)
             .agg(
                 league_points=("borda_points", "sum"),
-                total_pts=("total_pts", "sum"),
+                avg_pts_per_map=("total_pts", "mean"),
                 maps_counted=("week_map_key", "nunique"),
                 weeks_counted=("week", "nunique"),
             )
-            .sort_values(["league_points", "total_pts"], ascending=[False, False])
+            .sort_values(["league_points", "avg_pts_per_map"], ascending=[False, False])
             .reset_index(drop=True)
         )
         out[league_name] = table
@@ -1440,20 +1440,19 @@ def sort_subleague_table(table: pd.DataFrame, sort_by: str) -> pd.DataFrame:
     key = normalize_sort_key(sort_by)
     t = table.copy()
     t["_points"] = _num_col(t, "league_points")
-    t["_total_pts"] = _num_col(t, "total_pts")
     t["_maps"] = _num_col(t, "maps_counted")
     t["_weeks"] = _num_col(t, "weeks_counted")
-    t["_avg_pts"] = t["_total_pts"] / t["_maps"].clip(lower=1.0)
+    t["_avg_pts"] = _num_col(t, "avg_pts_per_map")
     t["_avg_points"] = t["_points"] / t["_maps"].clip(lower=1.0)
 
     by_key: Dict[str, Tuple[List[str], List[bool]]] = {
-        "default": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
-        "points": (["_points", "_total_pts", "_maps", "player"], [False, False, False, True]),
-        "total_pts": (["_total_pts", "_points", "_maps", "player"], [False, False, False, True]),
-        "maps": (["_maps", "_points", "_total_pts", "player"], [False, False, False, True]),
-        "weeks": (["_weeks", "_points", "_total_pts", "player"], [False, False, False, True]),
-        "avg_pts": (["_avg_pts", "_total_pts", "_points", "player"], [False, False, False, True]),
-        "avg_points": (["_avg_points", "_points", "_total_pts", "player"], [False, False, False, True]),
+        "default": (["_points", "_avg_pts", "_maps", "player"], [False, False, False, True]),
+        "points": (["_points", "_avg_pts", "_maps", "player"], [False, False, False, True]),
+        "total_pts": (["_avg_pts", "_points", "_maps", "player"], [False, False, False, True]),
+        "maps": (["_maps", "_points", "_avg_pts", "player"], [False, False, False, True]),
+        "weeks": (["_weeks", "_points", "_avg_pts", "player"], [False, False, False, True]),
+        "avg_pts": (["_avg_pts", "_points", "_maps", "player"], [False, False, False, True]),
+        "avg_points": (["_avg_points", "_points", "_avg_pts", "player"], [False, False, False, True]),
     }
     cols, asc = by_key.get(key, by_key["default"])
     return t.sort_values(cols, ascending=asc).drop(columns=[c for c in t.columns if c.startswith("_")]).reset_index(drop=True)
@@ -2624,7 +2623,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
     tables = compute_subleague_tables(df_overview)
     fast_tables = compute_fast_round_tables(df_overview)
     section_row = 3
-    headers = ["#", "Spelare", "Poäng", "Total pts", "Kartor", "Veckor"]
+    headers = ["#", "Spelare", "Poäng", "Snitt pts", "Kartor", "Veckor"]
     first_section_max_rows = 0
 
     for i, league_name in enumerate(leagues):
@@ -2648,7 +2647,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
             ws.cell(r, start_col + 0).value = idx
             ws.cell(r, start_col + 1).value = row.player
             ws.cell(r, start_col + 2).value = float(row.league_points)
-            ws.cell(r, start_col + 3).value = int(row.total_pts)
+            ws.cell(r, start_col + 3).value = float(getattr(row, "avg_pts_per_map", 0) or 0)
             ws.cell(r, start_col + 4).value = int(row.maps_counted)
             ws.cell(r, start_col + 5).value = int(row.weeks_counted)
 

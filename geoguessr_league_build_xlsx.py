@@ -37,6 +37,7 @@ TOKEN_RE = re.compile(r"/challenge/([A-Za-z0-9_-]+)")
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 EPOCH_RE = re.compile(r"^\d{10,13}$")
 SETTING_LABEL_RE = re.compile(r'game-settings-list_settingLabel[^"]*">(.*?)</div>', re.S)
+URL_RE = re.compile(r"https?://\S+")
 
 DEFAULT_TZ = "Europe/Stockholm"
 DEFAULT_INFORMATION_CONFIG_NAME = "information_config_v2.json"
@@ -335,6 +336,19 @@ def load_information_rows(config_path: Optional[Path], debug: bool = False) -> L
     if isinstance(payload, list):
         return _normalize_information_rows(payload)
     return default_information_rows()
+
+
+def _extract_information_link(text: str) -> Tuple[str, Optional[str]]:
+    match = URL_RE.search(str(text or ""))
+    if not match:
+        return str(text or ""), None
+
+    url = match.group(0).rstrip(".,);]")
+    label = (str(text or "")[:match.start()] + str(text or "")[match.end():]).strip()
+    label = re.sub(r"\s+", " ", label).rstrip(":").strip()
+    if not label:
+        label = url
+    return label, url
 
 
 # ============================================================
@@ -2727,11 +2741,22 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
         r = 3 + i
         fill = ROW_A if (i % 2 == 0) else ROW_B
         is_subtle = text.startswith("Mer info:")
+        display_text, url = _extract_information_link(text)
         ws.cell(r, 1).value = "·" if is_subtle else "•"
-        ws.cell(r, 2).value = text
+        ws.cell(r, 2).value = display_text
+        if url:
+            ws.cell(r, 2).hyperlink = url
         font = FONT_BODY_SUBTLE if is_subtle else FONT_BODY
         style_cell(ws, r, 1, fill=fill, font=font, align=CENTER)
         style_cell(ws, r, 2, fill=fill, font=font, align=LEFT)
+        if url:
+            ws.cell(r, 2).font = Font(
+                color="0563C1",
+                bold=font.bold,
+                italic=font.italic,
+                size=font.sz,
+                underline="single",
+            )
         ws.row_dimensions[r].height = 28 if is_subtle else 34
 
 

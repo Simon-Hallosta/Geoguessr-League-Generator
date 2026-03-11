@@ -351,6 +351,12 @@ def _extract_information_link(text: str) -> Tuple[str, Optional[str]]:
     return label, url
 
 
+def _excel_hyperlink_formula(url: str, label: str) -> str:
+    safe_url = str(url).replace('"', '""')
+    safe_label = str(label).replace('"', '""')
+    return f'=HYPERLINK("{safe_url}","{safe_label}")'
+
+
 # ============================================================
 # Highscores parsing (schema based on your payload)
 # ============================================================
@@ -2742,7 +2748,7 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
         is_subtle = text.startswith("Mer info:")
         display_text, url = _extract_information_link(text)
         ws.cell(r, 1).value = "·" if is_subtle else "•"
-        ws.cell(r, 2).value = display_text
+        ws.cell(r, 2).value = _excel_hyperlink_formula(url, display_text) if url else display_text
         if url:
             ws.cell(r, 2).hyperlink = url
         font = FONT_BODY_SUBTLE if is_subtle else FONT_BODY

@@ -41,6 +41,7 @@ URL_RE = re.compile(r"https?://\S+")
 
 DEFAULT_TZ = "Europe/Stockholm"
 DEFAULT_INFORMATION_CONFIG_NAME = "information_config_v2.json"
+DEFAULT_SWEDEN_MAPS = (1, 4)
 
 # Fixed weekly map slots (index -> category)
 MAP_SLOT_KEY_BY_INDEX = {
@@ -116,6 +117,7 @@ class WeekSpec:
     label: str
     urls_path: Path
     deadline: Optional[str] = None  # user string, parsed later
+    sweden_maps: Tuple[int, ...] = DEFAULT_SWEDEN_MAPS
 
 
 @dataclass
@@ -144,13 +146,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser()
 
     # repeatable week spec:
-    #   --week "Vecka 1|urls_week1.txt|2026-02-18 20:00"
-    # deadline is optional
+    #   --week "Vecka 1|urls_week1.txt|2026-02-18 20:00|1,4"
+    # deadline and sweden-map indexes are optional
     ap.add_argument(
         "--week",
         action="append",
         default=[],
-        help='Repeatable. Format: "LABEL|URLS_FILE|DEADLINE". Deadline optional. Example: --week "Vecka 2|urls_week2.txt|2026-02-25 20:00"',
+        help='Repeatable. Format: "LABEL|URLS_FILE|DEADLINE(optional)|SWEDEN_MAPS(optional)". Example: --week "Vecka 2|urls_week2.txt|2026-02-25 20:00|2,4"',
     )
 
     ap.add_argument("--out-base", default="Liga_overview", help="Base filename without extension.")
@@ -305,6 +307,69 @@ def map_slot_label(slot_key: str) -> str:
     return SLOT_LABEL_BY_KEY.get(slot_key, slot_key.replace("_", " ").title())
 
 
+def normalize_sweden_map_indexes(raw: Any) -> Tuple[int, ...]:
+    if raw is None:
+        return DEFAULT_SWEDEN_MAPS
+    if isinstance(raw, (list, tuple, set)):
+        items = list(raw)
+    else:
+        txt = str(raw).strip()
+        if not txt:
+            return DEFAULT_SWEDEN_MAPS
+        items = re.split(r"[\s,;]+", txt)
+    out: List[int] = []
+    for item in items:
+        iv = _parse_int_maybe(item)
+        if iv is None or iv <= 0:
+            continue
+        if iv not in out:
+            out.append(int(iv))
+    return tuple(sorted(out)) if out else DEFAULT_SWEDEN_MAPS
+
+
+def mode_category_from_rule_text(rule_text: Any) -> str:
+    txt = str(rule_text or "").strip().lower()
+    if not txt:
+        return "unknown"
+    if "nmpz" in txt:
+        return "nmpz"
+    if txt.startswith("nm") or "no move" in txt or "nmp" in txt:
+        return "no_move"
+    if "moving" in txt:
+        return "moving"
+    return "unknown"
+
+
+def mode_category_from_game(game: dict) -> str:
+    forbid_moving = game.get("forbidMoving")
+    forbid_zooming = game.get("forbidZooming")
+    forbid_rotating = game.get("forbidRotating")
+    if forbid_moving is True:
+        if forbid_zooming is True and forbid_rotating is True:
+            return "nmpz"
+        return "no_move"
+    return "moving"
+
+
+def mode_category_label(mode_category: str) -> str:
+    return {
+        "moving": "Moving",
+        "no_move": "No move",
+        "nmpz": "NMPZ",
+    }.get(str(mode_category or "").strip().lower(), "Unknown")
+
+
+def build_slot_key_from_mode(mode_category: str, occurrence_index: int) -> str:
+    cat = str(mode_category or "").strip().lower()
+    if cat == "moving":
+        return f"moving_{occurrence_index}"
+    if cat == "no_move":
+        return f"no_move_{occurrence_index}"
+    if cat == "nmpz":
+        return f"nmpz_{occurrence_index}"
+    return f"{cat or 'unknown'}_{occurrence_index}"
+
+
 def default_information_rows() -> List[str]:
     return list(DEFAULT_INFORMATION_ROWS)
 
@@ -399,6 +464,34 @@ def rule_text_from_game(game: dict) -> str:
             parts.append(f"{time_limit}s")
 
     return " - ".join(parts)
+
+
+def slot_metadata_from_week_maps(df_meta: pd.DataFrame) -> pd.DataFrame:
+    if df_meta.empty:
+        out = df_meta.copy()
+        out["slot_key"] = []
+        out["slot_label"] = []
+        return out
+
+    parts: List[pd.DataFrame] = []
+    for week_name, grp in df_meta.groupby("week", sort=False):
+        sub = grp.sort_values("map_index").copy()
+        counters = {"moving": 0, "no_move": 0, "nmpz": 0, "unknown": 0}
+        slot_keys: List[str] = []
+        slot_labels: List[str] = []
+        for _, row in sub.iterrows():
+            mode_category = str(row.get("mode_category") or "unknown").strip().lower()
+            counters[mode_category] = counters.get(mode_category, 0) + 1
+            key = build_slot_key_from_mode(mode_category, counters[mode_category])
+            slot_keys.append(key)
+            if mode_category in {"moving", "no_move", "nmpz"}:
+                slot_labels.append(map_slot_label(key))
+            else:
+                slot_labels.append(f"Map {int(_parse_int_maybe(row.get('map_index')) or 0)}")
+        sub["slot_key"] = slot_keys
+        sub["slot_label"] = slot_labels
+        parts.append(sub)
+    return pd.concat(parts, ignore_index=True) if parts else df_meta.copy()
 
 
 def player_name_from_item(item: dict) -> str:
@@ -937,6 +1030,8 @@ def build_week_entries(
         token = extract_token(url)
         map_name = f"Map {map_idx}"
         rule_text = ""
+        mode_category = "unknown"
+        is_sweden = map_idx in set(week.sweden_maps)
         try:
             items = fetch_highscores_items(
                 session=session,
@@ -954,6 +1049,7 @@ def build_week_entries(
                 map_name = landing_name
             if landing_rule:
                 rule_text = landing_rule
+                mode_category = mode_category_from_rule_text(landing_rule)
             map_meta_rows.append(
                 {
                     "week": week.label,
@@ -961,6 +1057,8 @@ def build_week_entries(
                     "map_url": url,
                     "map_name": map_name,
                     "rule_text": rule_text,
+                    "mode_category": mode_category,
+                    "is_sweden": bool(is_sweden),
                 }
             )
             continue
@@ -975,6 +1073,7 @@ def build_week_entries(
                 game0 = items[0]["game"]
                 map_name = str(game0.get("mapName") or "").strip()
                 rule_text = rule_text_from_game(game0)
+                mode_category = mode_category_from_game(game0)
             except Exception:
                 rule_text = ""
         else:
@@ -983,6 +1082,7 @@ def build_week_entries(
                 map_name = landing_name
             if landing_rule:
                 rule_text = landing_rule
+                mode_category = mode_category_from_rule_text(landing_rule)
 
         map_meta_rows.append(
             {
@@ -991,6 +1091,8 @@ def build_week_entries(
                 "map_url": url,
                 "map_name": map_name or f"Map {map_idx}",
                 "rule_text": rule_text or "",
+                "mode_category": mode_category,
+                "is_sweden": bool(is_sweden),
             }
         )
 
@@ -1086,17 +1188,19 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
       df_weekly: weekly summary per player (sum of borda)
       df_week_meta: map meta per (week,map) for headers
     """
+    meta_cols = ["week", "map_index", "map_url", "map_name", "rule_text", "mode_category", "is_sweden"]
     if not entries:
         if map_meta_rows:
-            df_week_meta = pd.DataFrame(map_meta_rows, columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+            df_week_meta = pd.DataFrame(map_meta_rows, columns=meta_cols)
             if not df_week_meta.empty:
                 df_week_meta = (
                     df_week_meta.drop_duplicates(subset=["week", "map_index"], keep="last")
                     .sort_values(["week", "map_index"])
                     .reset_index(drop=True)
                 )
+                df_week_meta = slot_metadata_from_week_maps(df_week_meta)
         else:
-            df_week_meta = pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+            df_week_meta = pd.DataFrame(columns=meta_cols + ["slot_key", "slot_label"])
         return (
             pd.DataFrame(
                 columns=[
@@ -1105,6 +1209,8 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
                     "map_url",
                     "map_name",
                     "rule_text",
+                    "mode_category",
+                    "is_sweden",
                     "slot_key",
                     "slot_label",
                     "player",
@@ -1137,8 +1243,6 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
         "fastest_5000_round_time": e.fastest_5000_round_time,
         "played_at_epoch": e.played_at_epoch,
     } for e in entries])
-    df["slot_key"] = df["map_index"].apply(map_slot_key)
-    df["slot_label"] = df["slot_key"].apply(map_slot_label)
 
     # discovered meta per map from result payloads
     df_week_meta_seen = (
@@ -1147,9 +1251,11 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
         .sort_values(["week", "map_index"])
         .reset_index(drop=True)
     )
+    df_week_meta_seen["mode_category"] = df_week_meta_seen["rule_text"].apply(mode_category_from_rule_text)
+    df_week_meta_seen["is_sweden"] = False
 
     if map_meta_rows:
-        df_week_meta_base = pd.DataFrame(map_meta_rows, columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+        df_week_meta_base = pd.DataFrame(map_meta_rows, columns=meta_cols)
         if not df_week_meta_base.empty:
             df_week_meta_base = (
                 df_week_meta_base.drop_duplicates(subset=["week", "map_index"], keep="last")
@@ -1157,7 +1263,7 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
                 .reset_index(drop=True)
             )
     else:
-        df_week_meta_base = pd.DataFrame(columns=["week", "map_index", "map_url", "map_name", "rule_text"])
+        df_week_meta_base = pd.DataFrame(columns=meta_cols)
 
     if df_week_meta_base.empty:
         df_week_meta = df_week_meta_seen
@@ -1168,6 +1274,8 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
                     "map_url": "seen_map_url",
                     "map_name": "seen_map_name",
                     "rule_text": "seen_rule_text",
+                    "mode_category": "seen_mode_category",
+                    "is_sweden": "seen_is_sweden",
                 }
             ),
             on=["week", "map_index"],
@@ -1199,7 +1307,22 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
             _prefer_non_empty(b, s, "")
             for b, s in zip(df_week_meta.get("rule_text", pd.Series(dtype=str)), df_week_meta.get("seen_rule_text", pd.Series(dtype=str)))
         ]
-        df_week_meta = df_week_meta[["week", "map_index", "map_url", "map_name", "rule_text"]]
+        df_week_meta["mode_category"] = [
+            str(b).strip() if str(b).strip() else str(s).strip()
+            for b, s in zip(df_week_meta.get("mode_category", pd.Series(dtype=str)), df_week_meta.get("seen_mode_category", pd.Series(dtype=str)))
+        ]
+        df_week_meta["is_sweden"] = [
+            bool(b) if pd.notna(b) else bool(s)
+            for b, s in zip(df_week_meta.get("is_sweden", pd.Series(dtype=bool)), df_week_meta.get("seen_is_sweden", pd.Series(dtype=bool)))
+        ]
+        df_week_meta = df_week_meta[meta_cols]
+
+    df_week_meta = slot_metadata_from_week_maps(df_week_meta)
+    df = df.merge(
+        df_week_meta[["week", "map_index", "mode_category", "is_sweden", "slot_key", "slot_label"]],
+        on=["week", "map_index"],
+        how="left",
+    )
 
     # compute rank/borda within each week+map
     out_rows: List[dict] = []
@@ -1269,7 +1392,10 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
 
     dfo = df_overview.copy()
     dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
-    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    if "slot_key" not in dfo.columns:
+        dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    dfo["mode_category"] = dfo.get("mode_category", pd.Series(index=dfo.index, dtype=object)).fillna("unknown").astype(str)
+    dfo["is_sweden"] = dfo.get("is_sweden", pd.Series(index=dfo.index, dtype=bool)).fillna(False).astype(bool)
 
     by_player = (
         dfo.groupby("player", as_index=False)
@@ -1311,12 +1437,48 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
         "nmpz_2": "cat_nmpz_2",
     })
 
-    by_player["cat_moving"] = by_player["cat_moving_1"] + by_player["cat_moving_2"]
-    by_player["cat_no_move"] = by_player["cat_no_move_1"] + by_player["cat_no_move_2"]
-    by_player["cat_nmpz"] = by_player["cat_nmpz_1"] + by_player["cat_nmpz_2"]
-    by_player["cat_sverige"] = by_player["cat_moving_1"] + by_player["cat_no_move_2"]
-    by_player["cat_sverige_moving"] = by_player["cat_moving_1"]
-    by_player["cat_sverige_no_move"] = by_player["cat_no_move_2"]
+    mode_scores = (
+        dfo.groupby(["player", "mode_category"], as_index=False)
+        .agg(mode_borda=("borda_points", "sum"))
+    )
+    if not mode_scores.empty:
+        mode_pivot = (
+            mode_scores.pivot_table(index="player", columns="mode_category", values="mode_borda", aggfunc="sum")
+            .fillna(0.0)
+            .reset_index()
+        )
+        by_player = by_player.merge(mode_pivot, on="player", how="left")
+    for key in ["moving", "no_move", "nmpz"]:
+        if key not in by_player.columns:
+            by_player[key] = 0.0
+
+    sverige_scores = (
+        dfo[dfo["is_sweden"]]
+        .groupby(["player", "mode_category"], as_index=False)
+        .agg(mode_borda=("borda_points", "sum"))
+    )
+    sverige_pivot = pd.DataFrame(columns=["player", "moving", "no_move"])
+    if not sverige_scores.empty:
+        sverige_pivot = (
+            sverige_scores.pivot_table(index="player", columns="mode_category", values="mode_borda", aggfunc="sum")
+            .fillna(0.0)
+            .reset_index()
+        )
+        by_player = by_player.merge(
+            sverige_pivot.rename(columns={"moving": "sverige_moving", "no_move": "sverige_no_move"}),
+            on="player",
+            how="left",
+        )
+    for key in ["sverige_moving", "sverige_no_move"]:
+        if key not in by_player.columns:
+            by_player[key] = 0.0
+
+    by_player["cat_moving"] = by_player["moving"]
+    by_player["cat_no_move"] = by_player["no_move"]
+    by_player["cat_nmpz"] = by_player["nmpz"]
+    by_player["cat_sverige"] = by_player["sverige_moving"] + by_player["sverige_no_move"]
+    by_player["cat_sverige_moving"] = by_player["sverige_moving"]
+    by_player["cat_sverige_no_move"] = by_player["sverige_no_move"]
 
     total = by_player.sort_values(["total_borda", "total_pts"], ascending=[False, False]).reset_index(drop=True)
     total = total.reindex(columns=base_cols_total)
@@ -1348,11 +1510,21 @@ def compute_subleague_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFram
         return out
 
     dfo = df_overview.copy()
-    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
     dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
+    dfo["mode_category"] = dfo.get("mode_category", pd.Series(index=dfo.index, dtype=object)).fillna("unknown").astype(str)
+    dfo["is_sweden"] = dfo.get("is_sweden", pd.Series(index=dfo.index, dtype=bool)).fillna(False).astype(bool)
 
-    for league_name, slots in SUBLEAGUE_SLOT_KEYS.items():
-        part = dfo[dfo["slot_key"].isin(slots)]
+    league_filters = {
+        "Moving": (dfo["mode_category"] == "moving"),
+        "No move": (dfo["mode_category"] == "no_move"),
+        "NMPZ": (dfo["mode_category"] == "nmpz"),
+        "Sverige": (dfo["is_sweden"] & dfo["mode_category"].isin(["moving", "no_move"])),
+        "Sverige Moving": (dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
+        "Sverige No Move": (dfo["is_sweden"] & (dfo["mode_category"] == "no_move")),
+    }
+
+    for league_name in SUBLEAGUE_SLOT_KEYS:
+        part = dfo[league_filters.get(league_name, pd.Series(False, index=dfo.index))]
         if part.empty:
             out[league_name] = pd.DataFrame(columns=["player", "league_points", "avg_pts_per_map", "maps_counted", "weeks_counted"])
             continue
@@ -1480,28 +1652,24 @@ def compute_fast_round_tables(df_overview: pd.DataFrame) -> Dict[str, pd.DataFra
       - otherwise pick player's highest single-round score
     """
     out: Dict[str, pd.DataFrame] = {}
-    cat_slots = {
-        "Sverige": ["moving_1", "no_move_2"],
-        "Världen": ["moving_2", "no_move_1", "nmpz_1", "nmpz_2"],
-    }
+    categories = ["Sverige", "Världen"]
     base_cols = ["player", "round_pts", "round_time", "result_type"]
 
     if df_overview.empty:
-        for k in cat_slots:
+        for k in categories:
             out[k] = pd.DataFrame(columns=base_cols)
         return out
 
     dfo = df_overview.copy()
-    if "slot_key" not in dfo.columns:
-        dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    dfo["is_sweden"] = dfo.get("is_sweden", pd.Series(index=dfo.index, dtype=bool)).fillna(False).astype(bool)
 
     dfo["total_pts"] = pd.to_numeric(dfo.get("total_pts"), errors="coerce").fillna(0.0)
     dfo["best_round_pts"] = pd.to_numeric(dfo.get("best_round_pts"), errors="coerce").fillna(0.0)
     dfo["best_round_time"] = pd.to_numeric(dfo.get("best_round_time"), errors="coerce").fillna(10**12)
     dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
 
-    for cat_name, slots in cat_slots.items():
-        part = dfo[dfo["slot_key"].isin(slots)]
+    for cat_name in categories:
+        part = dfo[dfo["is_sweden"]] if cat_name == "Sverige" else dfo[~dfo["is_sweden"]]
         if part.empty:
             out[cat_name] = pd.DataFrame(columns=base_cols)
             continue
@@ -1738,8 +1906,7 @@ def write_week_sheet(
     # header links per map
     for i in range(n_maps):
         c = col_map_start + i
-        slot_key = map_slot_key(maps[i].get("map_index"))
-        slot_label = map_slot_label(slot_key)
+        slot_label = str(maps[i].get("slot_label") or f"Map {i+1}")
         rule = str(maps[i].get("rule_text") or "")
         url = str(maps[i].get("map_url") or "")
         txt = f"🔗 {slot_label}"
@@ -2164,21 +2331,16 @@ def write_visualizations_sheet(
             )
 
     dfo = df_overview.copy()
-    dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
-    dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
+    if "slot_key" not in dfo.columns:
+        dfo["slot_key"] = dfo["map_index"].apply(map_slot_key)
+    if "slot_label" not in dfo.columns:
+        dfo["slot_label"] = dfo["slot_key"].apply(map_slot_label)
     dfo["total_pts"] = pd.to_numeric(dfo["total_pts"], errors="coerce").fillna(0.0)
     dfo["total_time"] = pd.to_numeric(dfo["total_time"], errors="coerce").fillna(0.0)
     dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
-
-    slot_to_mode3 = {
-        "moving_1": "Moving",
-        "moving_2": "Moving",
-        "no_move_1": "No move",
-        "no_move_2": "No move",
-        "nmpz_1": "NMPZ",
-        "nmpz_2": "NMPZ",
-    }
-    dfo["mode3"] = dfo["slot_key"].map(slot_to_mode3).fillna("Other")
+    dfo["mode_category"] = dfo.get("mode_category", pd.Series(index=dfo.index, dtype=object)).fillna("unknown").astype(str)
+    dfo["is_sweden"] = dfo.get("is_sweden", pd.Series(index=dfo.index, dtype=bool)).fillna(False).astype(bool)
+    dfo["mode3"] = dfo["mode_category"].apply(mode_category_label)
 
     weeks_seen = dfo["week"].dropna().astype(str).tolist()
     weeks_order = list(dict.fromkeys(list(weeks) + weeks_seen))
@@ -2357,20 +2519,22 @@ def write_visualizations_sheet(
     ax.set_title("V4: Aktiva spelare per vecka")
     v4_path = _save_fig(fig, "V4_aktiva_spelare_vecka.png")
 
-    cat_slots = {
-        "Moving": ["moving_1", "moving_2"],
-        "No move": ["no_move_1", "no_move_2"],
-        "NMPZ": ["nmpz_1", "nmpz_2"],
-        "Sverige": ["moving_1", "no_move_2"],
-        "Sverige Moving": ["moving_1"],
-        "Sverige No Move": ["no_move_2"],
-    }
-
     # V5: Ligans snitt GeoGuessr-poang per underliga-kategori
     v5_labels = ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]
     v5_values: List[float] = []
     for cat in v5_labels:
-        part = dfo[dfo["slot_key"].isin(cat_slots[cat])]
+        if cat == "Moving":
+            part = dfo[dfo["mode_category"] == "moving"]
+        elif cat == "No move":
+            part = dfo[dfo["mode_category"] == "no_move"]
+        elif cat == "NMPZ":
+            part = dfo[dfo["mode_category"] == "nmpz"]
+        elif cat == "Sverige":
+            part = dfo[dfo["is_sweden"] & dfo["mode_category"].isin(["moving", "no_move"])]
+        elif cat == "Sverige Moving":
+            part = dfo[dfo["is_sweden"] & (dfo["mode_category"] == "moving")]
+        else:
+            part = dfo[dfo["is_sweden"] & (dfo["mode_category"] == "no_move")]
         v5_values.append(float(part["total_pts"].mean()) if not part.empty else 0.0)
     fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if any(v5_values):
@@ -2500,8 +2664,19 @@ def write_visualizations_sheet(
     feat_rows: List[dict] = []
     for player, grp in dfo.groupby("player"):
         entry = {"player": str(player)}
-        for cat, slots in cat_slots.items():
-            sub = grp[grp["slot_key"].isin(slots)]
+        for cat in ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]:
+            if cat == "Moving":
+                sub = grp[grp["mode_category"] == "moving"]
+            elif cat == "No move":
+                sub = grp[grp["mode_category"] == "no_move"]
+            elif cat == "NMPZ":
+                sub = grp[grp["mode_category"] == "nmpz"]
+            elif cat == "Sverige":
+                sub = grp[grp["is_sweden"] & grp["mode_category"].isin(["moving", "no_move"])]
+            elif cat == "Sverige Moving":
+                sub = grp[grp["is_sweden"] & (grp["mode_category"] == "moving")]
+            else:
+                sub = grp[grp["is_sweden"] & (grp["mode_category"] == "no_move")]
             entry[f"avg_pts_{cat}"] = float(sub["total_pts"].mean()) if not sub.empty else 0.0
         entry["avg_time_min"] = float(grp["total_time"].mean()) / 60.0 if not grp.empty else 0.0
         entry["std_pts"] = float(grp["total_pts"].std()) if len(grp) > 1 else 0.0
@@ -2701,7 +2876,7 @@ def write_visualizations_sheet(
 
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
-    first_row = 18
+    first_row = 21
     row_step = 31
     for i in range(8):
         r = first_row + i * row_step
@@ -2971,18 +3146,19 @@ def parse_week_specs(week_args: List[str]) -> List[WeekSpec]:
     if not week_args:
         raise SystemExit(
             'No weeks specified. Example:\n'
-            '  python geoguessr_league_build_xlsx.py --week "Vecka 1|urls_week1.txt|2026-02-18 20:00" --week "Vecka 2|urls_week2.txt|2026-02-25 20:00"'
+            '  python geoguessr_league_build_xlsx.py --week "Vecka 1|urls_week1.txt|2026-02-18 20:00|1,4" --week "Vecka 2|urls_week2.txt|2026-02-25 20:00|2"'
         )
 
     out: List[WeekSpec] = []
     for s in week_args:
         parts = [p.strip() for p in s.split("|")]
-        if len(parts) < 2:
-            raise SystemExit(f'Bad --week "{s}". Expected "LABEL|URLS_FILE|DEADLINE(optional)".')
+        if len(parts) < 2 or len(parts) > 4:
+            raise SystemExit(f'Bad --week "{s}". Expected "LABEL|URLS_FILE|DEADLINE(optional)|SWEDEN_MAPS(optional)".')
         label = parts[0]
         urls_path = Path(parts[1]).expanduser()
         deadline = parts[2] if len(parts) >= 3 and parts[2] else None
-        out.append(WeekSpec(label=label, urls_path=urls_path, deadline=deadline))
+        sweden_maps = normalize_sweden_map_indexes(parts[3] if len(parts) >= 4 else "")
+        out.append(WeekSpec(label=label, urls_path=urls_path, deadline=deadline, sweden_maps=sweden_maps))
     return out
 
 

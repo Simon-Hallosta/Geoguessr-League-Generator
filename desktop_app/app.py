@@ -83,6 +83,25 @@ TABLE_SORT_OPTIONS = [
 TABLE_SORT_LABEL_TO_KEY = {label: key for label, key in TABLE_SORT_OPTIONS}
 TABLE_SORT_KEY_TO_LABEL = {key: label for label, key in TABLE_SORT_OPTIONS}
 DEFAULT_TABLE_SORT_KEY = "default"
+DEFAULT_SWEDEN_MAPS = "1,4"
+
+
+def _scaled_window_size(root: tk.Misc, *, width_ratio: float, height_ratio: float, min_width: int, min_height: int, max_width_margin: int = 80, max_height_margin: int = 80) -> tuple[int, int]:
+    screen_w = max(1, int(root.winfo_screenwidth()))
+    screen_h = max(1, int(root.winfo_screenheight()))
+    width = max(min_width, int(screen_w * width_ratio))
+    height = max(min_height, int(screen_h * height_ratio))
+    width = min(width, max(min_width, screen_w - max_width_margin))
+    height = min(height, max(min_height, screen_h - max_height_margin))
+    return width, height
+
+
+def _initial_main_window_size(root: tk.Misc) -> tuple[int, int]:
+    screen_w = max(1, int(root.winfo_screenwidth()))
+    screen_h = max(1, int(root.winfo_screenheight()))
+    width = min(1080, max(980, screen_w - 80))
+    height = min(max(740, int(screen_h * 0.9)), max(700, screen_h - 80))
+    return width, height
 
 if getattr(sys, "frozen", False):
     os.chdir(ROOT_DIR)
@@ -98,10 +117,18 @@ class WeekConfig:
     label: str
     file_path: Path
     deadline: str = ""
+    sweden_maps: str = DEFAULT_SWEDEN_MAPS
+
+    def effective_sweden_maps(self) -> str:
+        return self.sweden_maps.strip() or DEFAULT_SWEDEN_MAPS
 
     def to_week_arg(self) -> str:
-        if self.deadline.strip():
-            return f"{self.label}|{self.file_path}|{self.deadline.strip()}"
+        deadline = self.deadline.strip()
+        sweden_maps = self.effective_sweden_maps()
+        if sweden_maps:
+            return f"{self.label}|{self.file_path}|{deadline}|{sweden_maps}"
+        if deadline:
+            return f"{self.label}|{self.file_path}|{deadline}"
         return f"{self.label}|{self.file_path}"
 
 
@@ -117,6 +144,7 @@ class CreateWeekFileDialog(tk.Toplevel):
         self.label_var = tk.StringVar(value="Vecka 1")
         self.deadline_var = tk.StringVar(value="")
         self.filename_var = tk.StringVar(value="urls_week1.txt")
+        self.sweden_maps_var = tk.StringVar(value=DEFAULT_SWEDEN_MAPS)
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
@@ -124,7 +152,7 @@ class CreateWeekFileDialog(tk.Toplevel):
         frm = ttk.Frame(self, style="Card.TFrame", padding=12)
         frm.grid(sticky="nsew")
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(4, weight=1)
+        frm.rowconfigure(6, weight=1)
 
         ttk.Label(frm, text="Veckoetikett:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         label_entry = ttk.Entry(frm, textvariable=self.label_var, style="Modern.TEntry")
@@ -136,7 +164,11 @@ class CreateWeekFileDialog(tk.Toplevel):
         ttk.Label(frm, text="Filnamn:", style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         ttk.Entry(frm, textvariable=self.filename_var, style="Modern.TEntry").grid(row=2, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frm, text="Länkar (en per rad):", style="Field.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        ttk.Label(frm, text="Sverige-kartor:", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(frm, textvariable=self.sweden_maps_var, style="Modern.TEntry").grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        ttk.Label(frm, text="Exempel: 1,4", style="Hint.TLabel").grid(row=4, column=1, sticky="w", pady=(0, 6))
+
+        ttk.Label(frm, text="Länkar (en per rad):", style="Field.TLabel").grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 4))
 
         self.links_txt = tk.Text(
             frm,
@@ -150,10 +182,10 @@ class CreateWeekFileDialog(tk.Toplevel):
             relief="flat",
             font=("Segoe UI", 10),
         )
-        self.links_txt.grid(row=4, column=0, columnspan=2, sticky="nsew")
+        self.links_txt.grid(row=6, column=0, columnspan=2, sticky="nsew")
 
         button_row = ttk.Frame(frm, style="Card.TFrame")
-        button_row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        button_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         button_row.columnconfigure(0, weight=1)
 
         ttk.Button(button_row, text="Spara fil", style="Accent.TButton", command=self.save).grid(row=0, column=1, sticky="e")
@@ -178,6 +210,7 @@ class CreateWeekFileDialog(tk.Toplevel):
         label = self.label_var.get().strip()
         deadline = self.deadline_var.get().strip()
         filename = self.filename_var.get().strip()
+        sweden_maps = self.sweden_maps_var.get().strip()
         raw_links = self.links_txt.get("1.0", "end")
         links = [line.strip() for line in raw_links.splitlines() if line.strip()]
 
@@ -197,7 +230,7 @@ class CreateWeekFileDialog(tk.Toplevel):
         file_path = WEEK_FILES_DIR / filename
         file_path.write_text("\n".join(links) + "\n", encoding="utf-8")
 
-        self.on_save(WeekConfig(label=label, file_path=file_path, deadline=deadline))
+        self.on_save(WeekConfig(label=label, file_path=file_path, deadline=deadline, sweden_maps=sweden_maps))
         self.destroy()
 
 
@@ -403,7 +436,8 @@ class NcfaHelpDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc):
         super().__init__(master)
         self.title("Hitta _ncfa")
-        self.geometry("900x760")
+        width, height = _scaled_window_size(self, width_ratio=0.72, height_ratio=0.86, min_width=760, min_height=620)
+        self.geometry(f"{width}x{height}")
         self.minsize(760, 620)
         self.configure(bg=BG_APP)
         self._image_refs: list[object] = []
@@ -433,6 +467,35 @@ class NcfaHelpDialog(tk.Toplevel):
 
         content.bind("<Configure>", _sync_scroll_region)
         canvas.bind("<Configure>", _sync_content_width)
+
+        def _on_mousewheel(event) -> str:
+            if getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-3, "units")
+                return "break"
+            if getattr(event, "num", None) == 5:
+                canvas.yview_scroll(3, "units")
+                return "break"
+            delta = int(getattr(event, "delta", 0))
+            if delta:
+                step = -max(1, int(abs(delta) / 120))
+                canvas.yview_scroll(step if delta > 0 else -step, "units")
+                return "break"
+            return ""
+
+        def _bind_mousewheel(_event=None) -> None:
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel)
+            canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind_mousewheel(_event=None) -> None:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
+        content.bind("<Enter>", _bind_mousewheel)
+        content.bind("<Leave>", _unbind_mousewheel)
 
         ttk.Label(
             content,
@@ -542,7 +605,8 @@ class LeagueDesktopApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("GeoGuessr League Desktop")
-        self.root.geometry("1080x740")
+        width, height = _initial_main_window_size(self.root)
+        self.root.geometry(f"{width}x{height}")
         self.root.minsize(980, 680)
         self.root.configure(bg=BG_APP)
         self._configure_styles()
@@ -555,6 +619,8 @@ class LeagueDesktopApp:
         self._log_poll_job_id: Optional[str] = None
         self._run_started_at: Optional[float] = None
         self._saw_warning = False
+        self._main_scroll_bound = False
+        self._nested_scroll_handoff: tuple[int, int, int] | None = None
 
         self.ncfa_var = tk.StringVar(value=os.environ.get("GEOGUESSR_NCFA", ""))
         self.out_base_var = tk.StringVar(value="Liga")
@@ -691,18 +757,40 @@ class LeagueDesktopApp:
         style.map("Modern.Treeview.Heading", background=[("active", "#DFEBFA")])
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, style="App.TFrame", padding=18)
-        outer.pack(fill="both", expand=True)
-        outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(2, weight=1)
-        outer.rowconfigure(4, weight=1)
+        shell = ttk.Frame(self.root, style="App.TFrame")
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
 
-        logo_frame = ttk.Frame(outer, style="Hero.TFrame", padding=(14, 14, 14, 14))
+        hero_outer = ttk.Frame(shell, style="App.TFrame", padding=(18, 18, 18, 0))
+        hero_outer.grid(row=0, column=0, columnspan=2, sticky="ew")
+        hero_outer.columnconfigure(0, weight=1)
+
+        logo_frame = ttk.Frame(hero_outer, style="Hero.TFrame", padding=(14, 14, 14, 14))
         logo_frame.grid(row=0, column=0, sticky="ew")
         self._build_logo_header(logo_frame)
 
+        self.main_canvas = tk.Canvas(shell, bg=BG_APP, highlightthickness=0, bd=0)
+        self.main_canvas.grid(row=1, column=0, sticky="nsew")
+        self.main_scrollbar = ttk.Scrollbar(shell, orient="vertical", command=self.main_canvas.yview)
+        self.main_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
+
+        outer = ttk.Frame(self.main_canvas, style="App.TFrame", padding=(18, 12, 18, 18))
+        self._main_window_id = self.main_canvas.create_window((0, 0), window=outer, anchor="nw")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
+        outer.rowconfigure(3, weight=1)
+
+        outer.bind("<Configure>", self._sync_main_scroll_region)
+        self.main_canvas.bind("<Configure>", self._sync_main_content_width)
+        self.main_canvas.bind("<Enter>", self._bind_main_mousewheel)
+        self.main_canvas.bind("<Leave>", self._unbind_main_mousewheel)
+        outer.bind("<Enter>", self._bind_main_mousewheel)
+        outer.bind("<Leave>", self._unbind_main_mousewheel)
+
         env_frame = ttk.LabelFrame(outer, text="1) Inloggning / miljövariabel", style="Card.TLabelframe", padding=12)
-        env_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        env_frame.grid(row=0, column=0, sticky="ew")
         env_frame.columnconfigure(1, weight=1)
         ttk.Label(env_frame, text="_ncfa:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
         self.ncfa_entry = ttk.Entry(env_frame, textvariable=self.ncfa_var, show="*", style="Modern.TEntry")
@@ -733,7 +821,7 @@ class LeagueDesktopApp:
         ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 0))
 
         weeks_frame = ttk.LabelFrame(outer, text="2) Veckofiler", style="Card.TLabelframe", padding=12)
-        weeks_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        weeks_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         weeks_frame.columnconfigure(0, weight=1)
         weeks_frame.rowconfigure(1, weight=1)
 
@@ -743,14 +831,16 @@ class LeagueDesktopApp:
         )
         ttk.Label(weeks_frame, text=help_label, style="Hint.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        cols = ("label", "file", "deadline")
+        cols = ("label", "file", "deadline", "sweden")
         self.week_tree = ttk.Treeview(weeks_frame, style="Modern.Treeview", columns=cols, show="headings", height=9)
         self.week_tree.heading("label", text="Vecka")
         self.week_tree.heading("file", text="Textfil")
         self.week_tree.heading("deadline", text="Deadline (valfri)")
+        self.week_tree.heading("sweden", text="Sverige-kartor")
         self.week_tree.column("label", width=160, anchor="w")
-        self.week_tree.column("file", width=640, anchor="w")
+        self.week_tree.column("file", width=520, anchor="w")
         self.week_tree.column("deadline", width=180, anchor="center")
+        self.week_tree.column("sweden", width=140, anchor="center")
         self.week_tree.grid(row=1, column=0, sticky="nsew")
 
         tree_scroll = ttk.Scrollbar(weeks_frame, orient="vertical", command=self.week_tree.yview)
@@ -762,14 +852,16 @@ class LeagueDesktopApp:
         self.add_files_btn = ttk.Button(week_buttons, text="Lägg till befintliga filer", style="Accent.TButton", command=self.add_existing_files)
         self.create_file_btn = ttk.Button(week_buttons, text="Skapa ny veckofil", style="Soft.TButton", command=self.open_create_dialog)
         self.edit_deadline_btn = ttk.Button(week_buttons, text="Ändra deadline", style="Outline.TButton", command=self.edit_selected_deadline)
+        self.edit_sweden_btn = ttk.Button(week_buttons, text="Ändra Sverige-kartor", style="Outline.TButton", command=self.edit_selected_sweden_maps)
         self.remove_btn = ttk.Button(week_buttons, text="Ta bort vald", style="Outline.TButton", command=self.remove_selected)
         self.add_files_btn.pack(side="left")
         self.create_file_btn.pack(side="left", padx=(8, 0))
         self.edit_deadline_btn.pack(side="left", padx=(8, 0))
+        self.edit_sweden_btn.pack(side="left", padx=(8, 0))
         self.remove_btn.pack(side="left", padx=(8, 0))
 
         options_frame = ttk.LabelFrame(outer, text="3) Körning", style="Card.TLabelframe", padding=12)
-        options_frame.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        options_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         for i in range(6):
             options_frame.columnconfigure(i, weight=1 if i in (1, 3) else 0)
 
@@ -849,7 +941,7 @@ class LeagueDesktopApp:
         ttk.Label(progress_row, textvariable=self.progress_time_var, style="Hint.TLabel").grid(row=1, column=1, sticky="e", pady=(5, 0), padx=(12, 0))
 
         log_frame = ttk.LabelFrame(outer, text="Logg", style="Card.TLabelframe", padding=12)
-        log_frame.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
+        log_frame.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -875,6 +967,77 @@ class LeagueDesktopApp:
         self.log("Appen startad.")
         self.log("Tips: skapa veckofiler i appen, eller lägg till befintliga .txt-filer.")
         self.log(f"[STATE] Sparad konfiguration: {APP_STATE_PATH}")
+
+    def _sync_main_scroll_region(self, _event=None) -> None:
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _sync_main_content_width(self, event) -> None:
+        self.main_canvas.itemconfigure(self._main_window_id, width=event.width)
+
+    def _on_main_mousewheel(self, event) -> str:
+        widget = event.widget
+        widget_name = widget.winfo_class() if widget is not None else ""
+        direction = 0
+        if getattr(event, "num", None) == 4:
+            direction = -1
+        elif getattr(event, "num", None) == 5:
+            direction = 1
+        else:
+            delta = int(getattr(event, "delta", 0))
+            if delta > 0:
+                direction = -1
+            elif delta < 0:
+                direction = 1
+
+        if widget_name in {"Text", "Treeview", "Listbox"} and widget is not None:
+            try:
+                first, last = widget.yview()
+            except Exception:
+                return ""
+            at_top = first <= 0.0
+            at_bottom = last >= 1.0
+            widget_id = id(widget)
+            if (direction < 0 and not at_top) or (direction > 0 and not at_bottom):
+                self._nested_scroll_handoff = None
+                return ""
+            if direction != 0:
+                prior = self._nested_scroll_handoff
+                if prior is not None and prior[0] == widget_id and prior[1] == direction:
+                    count = prior[2] + 1
+                else:
+                    count = 1
+                self._nested_scroll_handoff = (widget_id, direction, count)
+                if count < 2:
+                    return "break"
+        elif widget_name in {"TCombobox", "Canvas"}:
+            self._nested_scroll_handoff = None
+            return ""
+        else:
+            self._nested_scroll_handoff = None
+
+        if direction < 0:
+            self.main_canvas.yview_scroll(-1, "units")
+            return "break"
+        if direction > 0:
+            self.main_canvas.yview_scroll(1, "units")
+            return "break"
+        return ""
+
+    def _bind_main_mousewheel(self, _event=None) -> None:
+        if self._main_scroll_bound:
+            return
+        self.root.bind_all("<MouseWheel>", self._on_main_mousewheel)
+        self.root.bind_all("<Button-4>", self._on_main_mousewheel)
+        self.root.bind_all("<Button-5>", self._on_main_mousewheel)
+        self._main_scroll_bound = True
+
+    def _unbind_main_mousewheel(self, _event=None) -> None:
+        if not self._main_scroll_bound:
+            return
+        self.root.unbind_all("<MouseWheel>")
+        self.root.unbind_all("<Button-4>")
+        self.root.unbind_all("<Button-5>")
+        self._main_scroll_bound = False
 
     def _build_logo_header(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(1, weight=1)
@@ -923,6 +1086,7 @@ class LeagueDesktopApp:
             self.add_files_btn,
             self.create_file_btn,
             self.edit_deadline_btn,
+            self.edit_sweden_btn,
             self.remove_btn,
             self.out_entry,
             self.tz_entry,
@@ -1051,7 +1215,7 @@ class LeagueDesktopApp:
             )
             if not label:
                 continue
-            self._insert_week(WeekConfig(label=label.strip(), file_path=file_path, deadline=""))
+            self._insert_week(WeekConfig(label=label.strip(), file_path=file_path, deadline="", sweden_maps=DEFAULT_SWEDEN_MAPS))
 
     def _guess_label_from_path(self, path: Path) -> str:
         digits = re.findall(r"\d+", path.stem)
@@ -1066,7 +1230,7 @@ class LeagueDesktopApp:
         if not week.file_path.exists():
             messagebox.showerror("Fel", f"Filen finns inte:\n{week.file_path}")
             return
-        row_id = self.week_tree.insert("", "end", values=(week.label, str(week.file_path), week.deadline))
+        row_id = self.week_tree.insert("", "end", values=(week.label, str(week.file_path), week.deadline, week.effective_sweden_maps()))
         self.weeks_by_id[row_id] = week
         self.log(f"[OK] Lade till: {week.label} -> {week.file_path}")
         self._save_state()
@@ -1083,8 +1247,28 @@ class LeagueDesktopApp:
         if dlg.result is None:
             return
         week.deadline = dlg.result.strip()
-        self.week_tree.item(row_id, values=(week.label, str(week.file_path), week.deadline))
+        self.week_tree.item(row_id, values=(week.label, str(week.file_path), week.deadline, week.effective_sweden_maps()))
         self.log(f"[OK] Uppdaterade deadline för {week.label}: {week.deadline or '(ingen)'}")
+        self._save_state()
+
+    def edit_selected_sweden_maps(self) -> None:
+        selected = self.week_tree.selection()
+        if not selected:
+            messagebox.showinfo("Info", "Markera en rad först.")
+            return
+        row_id = selected[0]
+        week = self.weeks_by_id[row_id]
+        value = simpledialog.askstring(
+            "Sverige-kartor",
+            f"Ange kartnummer för Sverige i {week.label}.\nExempel: 1,4",
+            initialvalue=week.effective_sweden_maps(),
+            parent=self.root,
+        )
+        if value is None:
+            return
+        week.sweden_maps = value.strip()
+        self.week_tree.item(row_id, values=(week.label, str(week.file_path), week.deadline, week.effective_sweden_maps()))
+        self.log(f"[OK] Uppdaterade Sverige-kartor för {week.label}: {week.effective_sweden_maps()}")
         self._save_state()
 
     def remove_selected(self) -> None:
@@ -1385,7 +1569,7 @@ class LeagueDesktopApp:
     def _save_state(self) -> None:
         state = {
             "weeks": [
-                {"label": w.label, "file_path": str(w.file_path), "deadline": w.deadline}
+                {"label": w.label, "file_path": str(w.file_path), "deadline": w.deadline, "sweden_maps": w.effective_sweden_maps()}
                 for w in self._collect_weeks_in_order()
             ],
             "settings": {
@@ -1436,11 +1620,12 @@ class LeagueDesktopApp:
             label = str(item.get("label", "")).strip()
             raw_path = str(item.get("file_path", "")).strip()
             deadline = str(item.get("deadline", "")).strip()
+            sweden_maps = str(item.get("sweden_maps", "")).strip()
             if not label or not raw_path:
                 continue
-            week = WeekConfig(label=label, file_path=Path(raw_path), deadline=deadline)
+            week = WeekConfig(label=label, file_path=Path(raw_path), deadline=deadline, sweden_maps=sweden_maps)
             if week.file_path.exists():
-                row_id = self.week_tree.insert("", "end", values=(week.label, str(week.file_path), week.deadline))
+                row_id = self.week_tree.insert("", "end", values=(week.label, str(week.file_path), week.deadline, week.effective_sweden_maps()))
                 self.weeks_by_id[row_id] = week
                 restored += 1
             else:

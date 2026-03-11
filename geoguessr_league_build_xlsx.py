@@ -2610,42 +2610,53 @@ def write_visualizations_sheet(
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str = "default") -> None:
     ws = wb.create_sheet("Underligor")
-    leagues = ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]
+    league_layout = [
+        ("Moving", 3, 1),
+        ("No move", 3, 8),
+        ("NMPZ", 3, 15),
+        ("Sverige", 3, 22),
+        ("Sverige Moving", None, 15),
+        ("Sverige No Move", None, 22),
+    ]
     block_widths = [4.5, 22.0, 12.0, 10.0, 8.0, 8.0]
     block_cols = len(block_widths)
     gap_cols = 1
-    total_cols = (block_cols + gap_cols) * len(leagues) - gap_cols
+    total_cols = 27
     merge_and_style(ws, 1, 1, 1, total_cols, "Underligor", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     widths: Dict[int, float] = {}
-    for i in range(len(leagues)):
-        start_col = 1 + i * (block_cols + gap_cols)
+    start_cols = sorted({start_col for _, _, start_col in league_layout})
+    for i, start_col in enumerate(start_cols):
         for offset, w in enumerate(block_widths):
             widths[start_col + offset] = w
-        if i < len(leagues) - 1:
+        if i < len(start_cols) - 1:
             widths[start_col + block_cols] = 3.0
     set_col_widths(ws, widths)
 
     tables = compute_subleague_tables(df_overview)
     fast_tables = compute_fast_round_tables(df_overview)
-    section_row = 3
     headers = ["#", "Spelare", "Poäng", "Snitt pts", "Kartor", "Veckor"]
-    first_section_max_rows = 0
+    first_row_max_rows = 0
+    second_row_max_rows = 0
 
-    for i, league_name in enumerate(leagues):
-        start_col = 1 + i * (block_cols + gap_cols)
+    for idx_layout, (league_name, base_row, start_col) in enumerate(league_layout):
+        if base_row is None:
+            base_row = 3 + 2 + first_row_max_rows + 3
         end_col = start_col + block_cols - 1
-        merge_and_style(ws, section_row, start_col, section_row, end_col, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
+        merge_and_style(ws, base_row, start_col, base_row, end_col, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
 
-        header_row = section_row + 1
+        header_row = base_row + 1
         for j, h in enumerate(headers):
             c = start_col + j
             ws.cell(header_row, c).value = h
             style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
 
-        data_start_row = section_row + 2
+        data_start_row = base_row + 2
         table = sort_subleague_table(tables.get(league_name, pd.DataFrame()), sort_by=sort_by)
-        first_section_max_rows = max(first_section_max_rows, len(table))
+        if idx_layout < 4:
+            first_row_max_rows = max(first_row_max_rows, len(table))
+        else:
+            second_row_max_rows = max(second_row_max_rows, len(table))
         for idx, row in enumerate(table.itertuples(index=False), start=1):
             r = data_start_row + (idx - 1)
             base_fill = ROW_A if (idx % 2 == 1) else ROW_B
@@ -2675,7 +2686,8 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
         )
 
     # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
-    fast_section_row = section_row + 2 + first_section_max_rows + 3
+    second_section_row = 3 + 2 + first_row_max_rows + 3
+    fast_section_row = second_section_row + 2 + second_row_max_rows + 3
     fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
     fast_leagues = ["Sverige", "Världen"]
     fast_block_cols = len(fast_headers)

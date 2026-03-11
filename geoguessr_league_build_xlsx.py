@@ -67,6 +67,8 @@ SUBLEAGUE_SLOT_KEYS = {
     "No move": ["no_move_1", "no_move_2"],
     "NMPZ": ["nmpz_1", "nmpz_2"],
     "Sverige": ["moving_1", "no_move_2"],
+    "Sverige Moving": ["moving_1"],
+    "Sverige No Move": ["no_move_2"],
 }
 
 DEFAULT_INFORMATION_ROWS = [
@@ -1235,6 +1237,8 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
         "cat_no_move",
         "cat_nmpz",
         "cat_sverige",
+        "cat_sverige_moving",
+        "cat_sverige_no_move",
     ]
     base_cols_stats = base_cols_total + ["best_week", "best_week_borda", "best_week_pts"]
 
@@ -1291,6 +1295,8 @@ def compute_total_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Da
     by_player["cat_no_move"] = by_player["cat_no_move_1"] + by_player["cat_no_move_2"]
     by_player["cat_nmpz"] = by_player["cat_nmpz_1"] + by_player["cat_nmpz_2"]
     by_player["cat_sverige"] = by_player["cat_moving_1"] + by_player["cat_no_move_2"]
+    by_player["cat_sverige_moving"] = by_player["cat_moving_1"]
+    by_player["cat_sverige_no_move"] = by_player["cat_no_move_2"]
 
     total = by_player.sort_values(["total_borda", "total_pts"], ascending=[False, False]).reset_index(drop=True)
     total = total.reindex(columns=base_cols_total)
@@ -1868,7 +1874,7 @@ def write_total_sheet(
 def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "default") -> None:
     ws = wb.create_sheet("Stats")
 
-    merge_and_style(ws, 1, 1, 1, 22, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 24, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     cols = [
         "#", "Spelare",
@@ -1878,6 +1884,7 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "defa
         "No move 1", "No move 2",
         "NMPZ 1", "NMPZ 2",
         "Moving", "No move", "NMPZ", "Sverige",
+        "Sverige Moving", "Sverige No Move",
         "Snitt poäng / karta", "Snitt poäng / vecka", "Snitt pts / karta",
         "Bästa vecka", "Bästa vecka poäng", "Bästa vecka pts",
     ]
@@ -1896,8 +1903,9 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "defa
         9: 10.0, 10: 10.0,
         11: 10.0, 12: 10.0,
         13: 10.0, 14: 10.0, 15: 10.0, 16: 10.0,
-        17: 14.0, 18: 14.0, 19: 12.0,
-        20: 14.0, 21: 18.0, 22: 14.0,
+        17: 14.0, 18: 14.0,
+        19: 14.0, 20: 14.0, 21: 12.0,
+        22: 14.0, 23: 18.0, 24: 14.0,
     }
     set_col_widths(ws, widths)
 
@@ -1924,14 +1932,16 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "defa
         ws.cell(r, 14).value = float(getattr(row, "cat_no_move", 0) or 0)
         ws.cell(r, 15).value = float(getattr(row, "cat_nmpz", 0) or 0)
         ws.cell(r, 16).value = float(getattr(row, "cat_sverige", 0) or 0)
-        ws.cell(r, 17).value = float(row.avg_borda_per_map)
-        ws.cell(r, 18).value = float(row.avg_borda_per_week)
-        ws.cell(r, 19).value = float(row.avg_pts_per_map)
-        ws.cell(r, 20).value = getattr(row, "best_week", "")
-        ws.cell(r, 21).value = float(getattr(row, "best_week_borda", 0) or 0)
-        ws.cell(r, 22).value = float(getattr(row, "best_week_pts", 0) or 0)
+        ws.cell(r, 17).value = float(getattr(row, "cat_sverige_moving", 0) or 0)
+        ws.cell(r, 18).value = float(getattr(row, "cat_sverige_no_move", 0) or 0)
+        ws.cell(r, 19).value = float(row.avg_borda_per_map)
+        ws.cell(r, 20).value = float(row.avg_borda_per_week)
+        ws.cell(r, 21).value = float(row.avg_pts_per_map)
+        ws.cell(r, 22).value = getattr(row, "best_week", "")
+        ws.cell(r, 23).value = float(getattr(row, "best_week_borda", 0) or 0)
+        ws.cell(r, 24).value = float(getattr(row, "best_week_pts", 0) or 0)
 
-        for c in range(1, 23):
+        for c in range(1, 25):
             align = LEFT if c == 2 else CENTER
             font = Font(color="000000", bold=True) if c in (3,) else FONT_BODY
             style_cell(ws, r, c, fill=fill, font=font, align=align)
@@ -1942,7 +1952,7 @@ def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "defa
         header_row=2,
         start_col=1,
         end_row=2 + len(sorted_stats),
-        end_col=22,
+        end_col=24,
         name_hint="Stats",
     )
 
@@ -2288,10 +2298,12 @@ def write_visualizations_sheet(
         "No move": ["no_move_1", "no_move_2"],
         "NMPZ": ["nmpz_1", "nmpz_2"],
         "Sverige": ["moving_1", "no_move_2"],
+        "Sverige Moving": ["moving_1"],
+        "Sverige No Move": ["no_move_2"],
     }
 
     # V5: Ligans snitt GeoGuessr-poang per underliga-kategori
-    v5_labels = ["Moving", "No move", "NMPZ", "Sverige"]
+    v5_labels = ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]
     v5_values: List[float] = []
     for cat in v5_labels:
         part = dfo[dfo["slot_key"].isin(cat_slots[cat])]
@@ -2299,9 +2311,9 @@ def write_visualizations_sheet(
     fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
     if any(v5_values):
         xs = list(range(len(v5_values)))
-        ax.bar(xs, v5_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B"])
+        ax.bar(xs, v5_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B", "#B4581B", "#D9A441"])
         ax.set_xticks(xs)
-        ax.set_xticklabels(v5_labels)
+        ax.set_xticklabels(v5_labels, rotation=20, ha="right")
         ax.set_ylabel("Snitt GeoGuessr-poäng")
     else:
         _empty_plot(ax)
@@ -2579,7 +2591,7 @@ def write_visualizations_sheet(
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str = "default") -> None:
     ws = wb.create_sheet("Underligor")
-    leagues = ["Moving", "No move", "NMPZ", "Sverige"]
+    leagues = ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]
     block_widths = [4.5, 22.0, 12.0, 10.0, 8.0, 8.0]
     block_cols = len(block_widths)
     gap_cols = 1

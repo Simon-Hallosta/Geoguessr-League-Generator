@@ -2686,8 +2686,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
         )
 
     # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
-    second_section_row = 3 + 2 + first_row_max_rows + 3
-    fast_section_row = second_section_row + 2 + second_row_max_rows + 3
+    fast_section_row = 3 + 2 + first_row_max_rows + 3
     fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
     fast_leagues = ["Sverige", "Världen"]
     fast_block_cols = len(fast_headers)

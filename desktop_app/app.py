@@ -103,6 +103,14 @@ def _initial_main_window_size(root: tk.Misc) -> tuple[int, int]:
     height = min(max(740, int(screen_h * 0.9)), max(700, screen_h - 80))
     return width, height
 
+
+def _initial_help_dialog_size(root: tk.Misc) -> tuple[int, int]:
+    screen_w = max(1, int(root.winfo_screenwidth()))
+    screen_h = max(1, int(root.winfo_screenheight()))
+    width = min(900, max(760, screen_w - 120))
+    height = min(max(620, int(screen_h * 0.86)), max(620, screen_h - 80))
+    return width, height
+
 if getattr(sys, "frozen", False):
     os.chdir(ROOT_DIR)
 
@@ -436,7 +444,7 @@ class NcfaHelpDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc):
         super().__init__(master)
         self.title("Hitta _ncfa")
-        width, height = _scaled_window_size(self, width_ratio=0.72, height_ratio=0.86, min_width=760, min_height=620)
+        width, height = _initial_help_dialog_size(self)
         self.geometry(f"{width}x{height}")
         self.minsize(760, 620)
         self.configure(bg=BG_APP)

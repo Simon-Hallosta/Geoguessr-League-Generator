@@ -2000,6 +2000,8 @@ def write_visualizations_sheet(
         "V9: Veckotrend-heatmap (över/under eget snitt)",
         "V10: PCA spelarmönster + bidrag till PC1/PC2",
         "V11: Standardavvikelse per karttyp och spelare",
+        "V12: Placering vecka för vecka (kumulativ liga)",
+        "V13: Ackumulerad ligapoäng vecka för vecka",
     ]
     ws["A3"] = "Diagramöversikt:"
     ws["A3"].font = Font(bold=True, color="1B314B")
@@ -2116,6 +2118,49 @@ def write_visualizations_sheet(
                 fontsize=fontsize,
                 color="#1F2D3D",
                 bbox={"boxstyle": "round,pad=0.08", "fc": "white", "ec": "none", "alpha": 0.38},
+            )
+
+    def _annotate_line_endpoints(ax, xs: List[float], y_by_player: Dict[str, List[float]], *, invert_y: bool = False) -> None:
+        if not xs or not y_by_player:
+            return
+        final_points: List[Tuple[str, float]] = []
+        for player, vals in y_by_player.items():
+            if not vals:
+                continue
+            final_points.append((str(player), float(vals[-1])))
+        if not final_points:
+            return
+
+        final_points.sort(key=lambda item: item[1], reverse=invert_y)
+        min_gap = 0.45
+        placed: List[float] = []
+        adjusted: Dict[str, float] = {}
+        for player, yv in final_points:
+            new_y = yv
+            if placed:
+                if invert_y:
+                    while any(abs(new_y - py) < min_gap for py in placed):
+                        new_y -= min_gap
+                else:
+                    while any(abs(new_y - py) < min_gap for py in placed):
+                        new_y += min_gap
+            placed.append(new_y)
+            adjusted[player] = new_y
+
+        x_last = float(xs[-1])
+        for player, vals in y_by_player.items():
+            if not vals:
+                continue
+            ax.scatter([x_last], [float(vals[-1])], s=18, color="white", edgecolors="none", zorder=5)
+            ax.annotate(
+                _safe_plot_label(player),
+                (x_last, adjusted.get(player, float(vals[-1]))),
+                textcoords="offset points",
+                xytext=(8, 0),
+                va="center",
+                fontsize=9,
+                color="#1F2D3D",
+                bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none", "alpha": 0.72},
             )
 
     dfo = df_overview.copy()
@@ -2575,11 +2620,93 @@ def write_visualizations_sheet(
     ax.set_title("V11: Standardavvikelse per karttyp och spelare")
     v11_path = _save_fig(fig, "V11_std_per_karttyp_spelare.png")
 
+    # V12/V13: Utveckling vecka for vecka (kumulativ liga)
+    weekly_player_points = (
+        dfo.groupby(["player", "week"], as_index=False)
+        .agg(weekly_points=("borda_points", "sum"))
+    )
+    if expanded_players:
+        v12_players = (
+            df_total[df_total["player"].astype(str).isin(expanded_players)]
+            .sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
+            .astype(str).head(12).tolist()
+        )
+    elif qualified_players:
+        v12_players = (
+            df_total[df_total["player"].astype(str).isin(qualified_players)]
+            .sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
+            .astype(str).head(12).tolist()
+        )
+    else:
+        v12_players = (
+            df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
+            .astype(str).head(12).tolist()
+        )
+
+    all_rank_players = (
+        df_total.sort_values(["total_borda", "total_pts"], ascending=[False, False])["player"]
+        .astype(str).tolist()
+    )
+    weekly_pivot_all = (
+        weekly_player_points.pivot_table(index="player", columns="week", values="weekly_points", aggfunc="sum")
+        .reindex(index=all_rank_players, columns=weeks_order)
+        .fillna(0.0)
+    )
+    cumulative_all = weekly_pivot_all.cumsum(axis=1)
+    cumulative_rank = cumulative_all.rank(axis=0, method="min", ascending=False)
+    cumulative_selected = cumulative_all.reindex(v12_players).fillna(0.0)
+    rank_selected = cumulative_rank.reindex(v12_players).fillna(len(all_rank_players) if all_rank_players else 0.0)
+
+    fig_w = max(BASE_FIG_W, min(17.0, 9.6 + 0.7 * max(1, len(weeks_order))))
+    xs = [float(i) for i in range(len(weeks_order))]
+    palette = [
+        "#1F5AA6", "#2E8B57", "#A64D1F", "#7A67D8", "#C0392B", "#117A65",
+        "#D68910", "#884EA0", "#2E4053", "#AF601A", "#2471A3", "#1E8449",
+    ]
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
+    if weeks_order and v12_players and not rank_selected.empty:
+        y_by_player_rank: Dict[str, List[float]] = {}
+        for idx, player in enumerate(v12_players):
+            vals = [float(x) for x in rank_selected.loc[player].tolist()]
+            y_by_player_rank[str(player)] = vals
+            color = palette[idx % len(palette)]
+            ax.plot(xs, vals, color=color, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+        _annotate_line_endpoints(ax, xs, y_by_player_rank, invert_y=True)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")
+        ax.set_ylabel("Placering")
+        ax.set_ylim(max(1.0, float(len(all_rank_players)) + 0.75), 0.25)
+        ax.grid(axis="y", alpha=0.18)
+    else:
+        _empty_plot(ax)
+    ax.set_title("V12: Placering vecka för vecka (kumulativ liga)")
+    v12_path = _save_fig(fig, "V12_placering_vecka_for_vecka.png")
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
+    if weeks_order and v12_players and not cumulative_selected.empty:
+        y_by_player_points: Dict[str, List[float]] = {}
+        for idx, player in enumerate(v12_players):
+            vals = [float(x) for x in cumulative_selected.loc[player].tolist()]
+            y_by_player_points[str(player)] = vals
+            color = palette[idx % len(palette)]
+            ax.plot(xs, vals, color=color, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+        _annotate_line_endpoints(ax, xs, y_by_player_points, invert_y=False)
+        ax.set_xticks(xs)
+        ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")
+        ax.set_ylabel("Ackumulerad ligapoäng")
+        ax.grid(axis="y", alpha=0.18)
+        ax.set_ylim(bottom=0)
+    else:
+        _empty_plot(ax)
+    ax.set_title("V13: Ackumulerad ligapoäng vecka för vecka")
+    v13_path = _save_fig(fig, "V13_ackumulerad_ligapoang_vecka_for_vecka.png")
+
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
     first_row = 18
     row_step = 31
-    for i in range(7):
+    for i in range(8):
         r = first_row + i * row_step
         anchors.append(f"A{r}")
         anchors.append(f"N{r}")
@@ -2598,6 +2725,8 @@ def write_visualizations_sheet(
         (v9_path, 720, 540),
         (v10_path, 720, 540),
         (v11_path, 720, 540),
+        (v12_path, 720, 540),
+        (v13_path, 720, 540),
     ]
 
     for idx, (img_path, w, h) in enumerate(image_specs):

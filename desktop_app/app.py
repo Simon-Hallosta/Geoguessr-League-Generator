@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import os
 import queue
 import re
@@ -26,6 +27,12 @@ try:
 except Exception:
     DateEntry = None  # type: ignore[assignment]
 
+try:
+    from PIL import Image, ImageTk
+except Exception:
+    Image = None  # type: ignore[assignment]
+    ImageTk = None  # type: ignore[assignment]
+
 
 def _resolve_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -33,12 +40,25 @@ def _resolve_base_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _resolve_resource_dir() -> Path:
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if bundle_dir:
+        return Path(bundle_dir)
+    return Path(__file__).resolve().parents[1]
+
+
 ROOT_DIR = _resolve_base_dir()
+RESOURCE_DIR = _resolve_resource_dir()
 WEEK_FILES_DIR = ROOT_DIR / "week_urls"
 APP_STATE_PATH = ROOT_DIR / "desktop_app_state.json"
-INFO_CONFIG_PATH = ROOT_DIR / "information_config.json"
+INFO_CONFIG_PATH = ROOT_DIR / "information_config_v2.json"
+LEGACY_INFO_CONFIG_PATH = ROOT_DIR / "information_config.json"
 INFO_CONFIG_LEGACY_DIR = ROOT_DIR / "legacy_configs" / "information"
-APP_ICON_PATH = Path(__file__).resolve().parent / "assets" / "geoleague.ico"
+APP_ICON_PATH = RESOURCE_DIR / "desktop_app" / "assets" / "geoleague.ico"
+NCFA_HELP_IMAGES = {
+    "application": RESOURCE_DIR / "img" / "f12-application.png",
+    "cookie": RESOURCE_DIR / "img" / "_ncfa-cookie-value.png",
+}
 
 BG_APP = "#EEF3FA"
 BG_CARD = "#FFFFFF"
@@ -379,6 +399,145 @@ class InformationConfigDialog(tk.Toplevel):
         self.destroy()
 
 
+class NcfaHelpDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc):
+        super().__init__(master)
+        self.title("Hitta _ncfa")
+        self.geometry("900x760")
+        self.minsize(760, 620)
+        self.configure(bg=BG_APP)
+        self._image_refs: list[object] = []
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        outer = ttk.Frame(self, style="Card.TFrame", padding=12)
+        outer.grid(sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, bg=BG_CARD, highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        content = ttk.Frame(canvas, style="Card.TFrame", padding=(8, 4, 8, 8))
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _sync_scroll_region(_event=None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_content_width(event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_content_width)
+
+        ttk.Label(
+            content,
+            text="Så hittar du GeoGuessr-cookien _ncfa",
+            style="Field.TLabel",
+            font=("Segoe UI Semibold", 14),
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            content,
+            text=(
+                "Guiden återanvänder samma steg som README:n. "
+                "När du har kopierat värdet klistrar du in det i fältet i appen."
+            ),
+            style="Hint.TLabel",
+            wraplength=780,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 12))
+
+        self._add_step(
+            content,
+            row=2,
+            title="1. Logga in i GeoGuessr",
+            body="Öppna GeoGuessr i din vanliga webbläsare och logga in som vanligt.",
+        )
+        self._add_step(
+            content,
+            row=3,
+            title="2. Öppna DevTools och gå till Cookies",
+            body="Tryck F12 och gå till Application -> Cookies -> https://www.geoguessr.com.",
+            image_path=NCFA_HELP_IMAGES["application"],
+        )
+        self._add_step(
+            content,
+            row=4,
+            title="3. Leta upp _ncfa",
+            body="Markera raden med namnet _ncfa och kopiera dess value.",
+            image_path=NCFA_HELP_IMAGES["cookie"],
+        )
+        self._add_step(
+            content,
+            row=5,
+            title="4. Klistra in värdet i appen",
+            body=(
+                "Klistra in cookien i _ncfa-fältet här i appen. "
+                "Du kan sedan välja antingen att bara sätta den i appen eller spara den som Windows-variabel."
+            ),
+        )
+
+        buttons = ttk.Frame(content, style="Card.TFrame")
+        buttons.grid(row=6, column=0, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Stäng", style="Accent.TButton", command=self.destroy).pack(side="left")
+
+        self.transient(master)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _add_step(self, parent: ttk.Frame, row: int, title: str, body: str, image_path: Optional[Path] = None) -> None:
+        card = ttk.Frame(parent, style="Card.TFrame", padding=(0, 0, 0, 10))
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 4))
+        card.columnconfigure(0, weight=1)
+
+        ttk.Label(card, text=title, style="Field.TLabel", font=("Segoe UI Semibold", 11)).grid(row=0, column=0, sticky="w")
+        ttk.Label(card, text=body, style="Hint.TLabel", wraplength=780, justify="left").grid(row=1, column=0, sticky="w", pady=(3, 0))
+
+        if image_path is None:
+            return
+
+        image_label = self._build_image_label(card, image_path)
+        if image_label is not None:
+            image_label.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        else:
+            ttk.Label(
+                card,
+                text=f"Bild kunde inte laddas: {image_path.name}",
+                style="Hint.TLabel",
+            ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+    def _build_image_label(self, parent: ttk.Frame, image_path: Path) -> Optional[tk.Label]:
+        if not image_path.exists():
+            return None
+
+        try:
+            if Image is not None and ImageTk is not None:
+                img = Image.open(image_path)
+                max_width = 760
+                max_height = 360
+                scale = min(max_width / img.width, max_height / img.height, 1.0)
+                new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+                if new_size != img.size:
+                    img = img.resize(new_size, Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+            else:
+                photo = tk.PhotoImage(file=str(image_path))
+                x_step = max(1, math.ceil(photo.width() / 760))
+                y_step = max(1, math.ceil(photo.height() / 360))
+                step = max(x_step, y_step)
+                if step > 1:
+                    photo = photo.subsample(step, step)
+        except Exception:
+            return None
+
+        self._image_refs.append(photo)
+        return tk.Label(parent, image=photo, bg=BG_CARD, bd=0, highlightthickness=1, highlightbackground=BORDER)
+
+
 class LeagueDesktopApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -550,15 +709,28 @@ class LeagueDesktopApp:
         self.ncfa_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         self.env_btn = ttk.Button(env_frame, text="Sätt GEOGUESSR_NCFA i appen", style="Accent.TButton", command=self.apply_ncfa_env)
         self.env_btn.grid(row=0, column=2, padx=(8, 0))
+        self.ncfa_help_btn = ttk.Button(
+            env_frame,
+            text="Var hittar jag _ncfa?",
+            style="Soft.TButton",
+            command=self.open_ncfa_help,
+        )
+        self.ncfa_help_btn.grid(row=0, column=3, padx=(8, 0))
         self.save_windows_env_btn = ttk.Button(
             env_frame,
             text="Spara i Windows (setx)",
             style="Outline.TButton",
             command=self.save_ncfa_to_windows_env,
         )
-        self.save_windows_env_btn.grid(row=0, column=3, padx=(8, 0))
+        self.save_windows_env_btn.grid(row=0, column=4, padx=(8, 0))
         if not sys.platform.startswith("win"):
             self.save_windows_env_btn.configure(state="disabled")
+
+        ttk.Label(
+            env_frame,
+            text="Behöver du hjälp första gången? Öppna guiden och följ samma steg som i README:n.",
+            style="Hint.TLabel",
+        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 0))
 
         weeks_frame = ttk.LabelFrame(outer, text="2) Veckofiler", style="Card.TLabelframe", padding=12)
         weeks_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
@@ -746,6 +918,7 @@ class LeagueDesktopApp:
         for widget in [
             self.ncfa_entry,
             self.env_btn,
+            self.ncfa_help_btn,
             self.save_windows_env_btn,
             self.add_files_btn,
             self.create_file_btn,
@@ -854,6 +1027,9 @@ class LeagueDesktopApp:
         except subprocess.CalledProcessError as ex:
             err = (ex.stderr or ex.stdout or str(ex)).strip()
             messagebox.showerror("Fel", f"Kunde inte spara variabeln:\n{err}")
+
+    def open_ncfa_help(self) -> None:
+        NcfaHelpDialog(self.root)
 
     def add_existing_files(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -973,6 +1149,8 @@ class LeagueDesktopApp:
             "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.",
             "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.",
             "Vid frågor, skriv i #ligan.",
+            "Mer info: Testa att skapa Excel-filen själv via appen: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
+            "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
         ]
 
     def _information_config_payload(self, rows: list[str]) -> dict:
@@ -987,7 +1165,7 @@ class LeagueDesktopApp:
         try:
             payload = json.loads(INFO_CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception as ex:
-            self.log(f"[WARN] Kunde inte läsa information_config.json ({ex}). Använder default.")
+            self.log(f"[WARN] Kunde inte läsa {INFO_CONFIG_PATH.name} ({ex}). Använder default.")
             return self._default_information_rows()
 
         if isinstance(payload, dict):
@@ -1002,7 +1180,20 @@ class LeagueDesktopApp:
         out = [str(line).strip() for line in rows if str(line).strip()]
         return out or self._default_information_rows()
 
+    def _migrate_legacy_information_config_if_needed(self) -> None:
+        if not LEGACY_INFO_CONFIG_PATH.exists():
+            return
+        try:
+            INFO_CONFIG_LEGACY_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            legacy_target = INFO_CONFIG_LEGACY_DIR / f"information_config_legacy_migrated_{stamp}.json"
+            shutil.move(str(LEGACY_INFO_CONFIG_PATH), str(legacy_target))
+            self.log(f"[INFO] Migrerade gammal information-config till legacy: {legacy_target}")
+        except Exception as ex:
+            self.log(f"[WARN] Kunde inte migrera gammal information-config ({ex}).")
+
     def _ensure_information_config_exists(self) -> None:
+        self._migrate_legacy_information_config_if_needed()
         if INFO_CONFIG_PATH.exists():
             return
         try:

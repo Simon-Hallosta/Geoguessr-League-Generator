@@ -9,3 +9,6 @@ dist/
 
 # Local Windows build environment
 .venv-win/
+
+# Runtime-generated app config
+information_config_v2.json

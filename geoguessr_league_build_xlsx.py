@@ -39,7 +39,7 @@ EPOCH_RE = re.compile(r"^\d{10,13}$")
 SETTING_LABEL_RE = re.compile(r'game-settings-list_settingLabel[^"]*">(.*?)</div>', re.S)
 
 DEFAULT_TZ = "Europe/Stockholm"
-DEFAULT_INFORMATION_CONFIG_NAME = "information_config.json"
+DEFAULT_INFORMATION_CONFIG_NAME = "information_config_v2.json"
 
 # Fixed weekly map slots (index -> category)
 MAP_SLOT_KEY_BY_INDEX = {
@@ -77,6 +77,8 @@ DEFAULT_INFORMATION_ROWS = [
     "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.",
     "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.",
     "Vid frågor, skriv i #ligan.",
+    "Mer info: Testa att skapa Excel-filen själv via appen: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
+    "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
 ]
 
 # Excel styling
@@ -93,6 +95,7 @@ FONT_HDR = Font(color="FFFFFF", bold=True)
 FONT_HDR_BIG = Font(color="FFFFFF", bold=True, size=16)
 FONT_HDR_MED = Font(color="FFFFFF", bold=True, size=12)
 FONT_BODY = Font(color="000000", bold=False)
+FONT_BODY_SUBTLE = Font(color="667085", bold=False, italic=True, size=10)
 
 THIN = Side(style="thin", color="1F1F1F")
 BORDER_THIN = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -2711,11 +2714,13 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
     for i, text in enumerate(rows, start=0):
         r = 3 + i
         fill = ROW_A if (i % 2 == 0) else ROW_B
-        ws.cell(r, 1).value = "•"
+        is_subtle = text.startswith("Mer info:")
+        ws.cell(r, 1).value = "·" if is_subtle else "•"
         ws.cell(r, 2).value = text
-        style_cell(ws, r, 1, fill=fill, font=FONT_BODY, align=CENTER)
-        style_cell(ws, r, 2, fill=fill, font=FONT_BODY, align=LEFT)
-        ws.row_dimensions[r].height = 34
+        font = FONT_BODY_SUBTLE if is_subtle else FONT_BODY
+        style_cell(ws, r, 1, fill=fill, font=font, align=CENTER)
+        style_cell(ws, r, 2, fill=fill, font=font, align=LEFT)
+        ws.row_dimensions[r].height = 28 if is_subtle else 34
 
 
 def write_raw_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:

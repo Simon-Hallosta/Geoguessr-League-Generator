@@ -46,6 +46,8 @@ if exist "dist\GeoLeagueBuilder.exe" (
   --onefile ^
   --windowed ^
   --workpath "%WORKPATH%" ^
+  --add-data "img;img" ^
+  --add-data "desktop_app\assets;desktop_app\assets" ^
   --icon "desktop_app\assets\geoleague.ico" ^
   --name "!EXE_NAME!" ^
   --hidden-import matplotlib ^

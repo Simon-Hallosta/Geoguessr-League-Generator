@@ -2633,8 +2633,9 @@ def write_visualizations_sheet(
     weekly_pivot_all = (
         weekly_player_points.pivot_table(index="player", columns="week", values="weekly_points", aggfunc="sum")
         .reindex(index=all_rank_players, columns=weeks_order)
-        .fillna(0.0)
     )
+    weekly_data_mask = weekly_pivot_all.notna()
+    weekly_pivot_all = weekly_pivot_all.fillna(0.0)
     cumulative_all = weekly_pivot_all.cumsum(axis=1)
     cumulative_rank = cumulative_all.rank(axis=0, method="min", ascending=False)
     cumulative_selected = cumulative_all.reindex(v12_players).fillna(0.0)
@@ -2646,6 +2647,7 @@ def write_visualizations_sheet(
         "#1F5AA6", "#2E8B57", "#A64D1F", "#7A67D8", "#C0392B", "#117A65",
         "#D68910", "#884EA0", "#2E4053", "#AF601A", "#2471A3", "#1E8449",
     ]
+    line_styles = ["-", "--", "-.", ":"]
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
     if weeks_order and v12_players and not rank_selected.empty:
@@ -2654,7 +2656,13 @@ def write_visualizations_sheet(
             vals = [float(x) for x in rank_selected.loc[player].tolist()]
             y_by_player_rank[str(player)] = vals
             color = palette[idx % len(palette)]
-            ax.plot(xs, vals, color=color, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+            linestyle = line_styles[(idx // len(palette)) % len(line_styles)]
+            ax.plot(xs, vals, color=color, linestyle=linestyle, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+            marker_mask = weekly_data_mask.loc[player].tolist() if player in weekly_data_mask.index else []
+            marker_xs = [x for x, has_data in zip(xs, marker_mask) if bool(has_data)]
+            marker_ys = [y for y, has_data in zip(vals, marker_mask) if bool(has_data)]
+            if marker_xs:
+                ax.scatter(marker_xs, marker_ys, color=color, s=18, zorder=4, edgecolors="white", linewidths=0.4)
         _annotate_line_endpoints(ax, xs, y_by_player_rank, invert_y=True)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")
@@ -2673,7 +2681,13 @@ def write_visualizations_sheet(
             vals = [float(x) for x in cumulative_selected.loc[player].tolist()]
             y_by_player_points[str(player)] = vals
             color = palette[idx % len(palette)]
-            ax.plot(xs, vals, color=color, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+            linestyle = line_styles[(idx // len(palette)) % len(line_styles)]
+            ax.plot(xs, vals, color=color, linestyle=linestyle, linewidth=2.6 if idx < 3 else 1.9, alpha=0.95)
+            marker_mask = weekly_data_mask.loc[player].tolist() if player in weekly_data_mask.index else []
+            marker_xs = [x for x, has_data in zip(xs, marker_mask) if bool(has_data)]
+            marker_ys = [y for y, has_data in zip(vals, marker_mask) if bool(has_data)]
+            if marker_xs:
+                ax.scatter(marker_xs, marker_ys, color=color, s=18, zorder=4, edgecolors="white", linewidths=0.4)
         _annotate_line_endpoints(ax, xs, y_by_player_points, invert_y=False)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")

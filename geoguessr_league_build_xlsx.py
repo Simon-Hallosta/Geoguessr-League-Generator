@@ -85,6 +85,26 @@ DEFAULT_INFORMATION_ROWS = [
     "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
 ]
 
+STYLE_MIN_MAPS = 6
+STYLE_MIN_WEEKS = 2
+STYLE_SIMILARITY_MAX_PLAYERS = 20
+STYLE_FEATURE_SPECS = [
+    ("fivek_rate_raw", "5k-frekvens", 1.30, "Andel kartor med minst en 5k-runda."),
+    ("fivek_speed_raw", "5k-hastighet", 1.15, "Hur snabbt 5k tas nar den kommer."),
+    ("fivek_steps_moving_raw", "5k-steg i moving", 1.05, "Fa steg for att ta 5k i moving."),
+    ("best_round_efficiency_raw", "Basta-runda-effektivitet", 1.20, "Hog rundpoang i forhallande till rundtid."),
+    ("map_time_efficiency_raw", "Karttidseffektivitet", 1.00, "Laga karttider utan att bara spegla totalpoang."),
+    ("no_move_strength_raw", "No move-styrka", 1.25, "Relativ styrka i no move."),
+    ("nmpz_strength_raw", "NMPZ-styrka", 1.25, "Relativ styrka i NMPZ."),
+    ("moving_strength_raw", "Moving-styrka", 0.75, "Relativ styrka i moving."),
+    ("specialization_raw", "Specialisering", 1.00, "Hur tydligt spelaren avviker mellan modes."),
+    ("consistency_raw", "Konsistens", 1.00, "Jamnhet inom spelarens prestationer."),
+    ("clutch_profile_raw", "Clutchprofil", 0.90, "Formaga att hitta toppresultat i enskilda rundor."),
+    ("precision_support_raw", "Precisionstod", 0.45, "Latt precisionstillskott via map-relativa resultat."),
+    ("total_pts_support_raw", "Totalpoang-stod", 0.20, "Svag stodsignal for total resultatniva."),
+]
+STYLE_VECTOR_COLUMNS = [key for key, _, _, _ in STYLE_FEATURE_SPECS]
+
 # Excel styling
 DARK = PatternFill("solid", fgColor="2B2B2B")
 MID = PatternFill("solid", fgColor="3A3A3A")
@@ -135,6 +155,12 @@ class Entry:
     best_round_pts: int
     best_round_time: int
     fastest_5000_round_time: Optional[int]
+    total_distance_m: Optional[float]
+    total_steps: Optional[int]
+    avg_steps_per_round: Optional[float]
+    count_5000_rounds: Optional[int]
+    fastest_5000_round_steps: Optional[int]
+    fastest_5000_round_distance_m: Optional[float]
     played_at_epoch: Optional[int]  # optional, for deadline filtering
 
 
@@ -827,12 +853,12 @@ def extract_played_at_epoch(game_payload: Any) -> Optional[int]:
     return best[1] if best is not None else None
 
 
-def fetch_game_details_for_played_at(
+def fetch_game_details_payload(
     session: requests.Session,
     game_token: str,
     timeout: float,
     debug: bool,
-) -> Optional[int]:
+) -> Optional[dict]:
     """
     Try a few endpoints. GeoGuessr may change schemas.
     We keep this tolerant: if an endpoint fails, try next.
@@ -844,13 +870,24 @@ def fetch_game_details_for_played_at(
     for url in endpoints:
         try:
             payload = http_get_json(session, url, timeout=timeout, debug=debug)
-            ep = extract_played_at_epoch(payload)
-            if ep is not None:
-                return ep
+            if isinstance(payload, dict):
+                return payload
         except Exception as e:
             debug_print(debug, f"[played_at] endpoint failed: {url} -> {e}")
             continue
     return None
+
+
+def fetch_game_details_for_played_at(
+    session: requests.Session,
+    game_token: str,
+    timeout: float,
+    debug: bool,
+) -> Optional[int]:
+    payload = fetch_game_details_payload(session, game_token, timeout=timeout, debug=debug)
+    if payload is None:
+        return None
+    return extract_played_at_epoch(payload)
 
 
 def fetch_challenge_landing_meta(
@@ -925,6 +962,329 @@ def fetch_challenge_landing_meta(
         rule_text = rule_text_from_game(pseudo_game)
 
     return map_name, rule_text
+
+
+def _clean_html_text(fragment: str) -> str:
+    txt = re.sub(r"<[^>]+>", "", str(fragment or ""))
+    return " ".join(html.unescape(txt).replace("\xa0", " ").split()).strip()
+
+
+def _parse_distance_meters(text: str) -> Optional[float]:
+    s = _clean_html_text(text).lower().replace(",", ".")
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(km|m)\b", s)
+    if not m:
+        return None
+    value = float(m.group(1))
+    return value * 1000.0 if m.group(2) == "km" else value
+
+
+def _parse_duration_seconds(text: str) -> Optional[int]:
+    s = _clean_html_text(text).lower()
+    mins = 0
+    secs = 0
+    m_min = re.search(r"(\d+)\s*min", s)
+    m_sec = re.search(r"(\d+)\s*sec", s)
+    if m_min:
+        mins = int(m_min.group(1))
+    if m_sec:
+        secs = int(m_sec.group(1))
+    if m_min or m_sec:
+        return mins * 60 + secs
+    return None
+
+
+def _parse_steps_count(text: str) -> Optional[int]:
+    s = _clean_html_text(text).lower()
+    m = re.search(r"(\d[\d,]*)\s*steps?\b", s)
+    if not m:
+        return None
+    return int(m.group(1).replace(",", ""))
+
+
+def _parse_score_points_text(text: str) -> Optional[int]:
+    s = _clean_html_text(text)
+    m = re.search(r"(\d[\d,]*)\s*pts\b", s, re.I)
+    if not m:
+        return None
+    return int(m.group(1).replace(",", ""))
+
+
+def _build_player_metrics_from_round_rows(round_rows: List[dict]) -> dict:
+    rounds_5000 = [row for row in round_rows if int(row.get("pts") or 0) >= 5000]
+    fastest_5000 = None
+    if rounds_5000:
+        fastest_5000 = min(
+            rounds_5000,
+            key=lambda row: (int(row.get("time_s") or 10**12), int(row.get("steps") or 10**12)),
+        )
+
+    step_values = [int(row["steps"]) for row in round_rows if row.get("steps") is not None]
+    distance_values = [float(row["distance_m"]) for row in round_rows if row.get("distance_m") is not None]
+    avg_steps = (sum(step_values) / len(step_values)) if step_values else None
+
+    return {
+        "round_rows": round_rows,
+        "total_distance_m": (sum(distance_values) if distance_values else None),
+        "total_steps": (sum(step_values) if step_values else None),
+        "avg_steps_per_round": avg_steps,
+        "count_5000_rounds": len(rounds_5000),
+        "fastest_5000_round_steps": (int(fastest_5000["steps"]) if fastest_5000 and fastest_5000.get("steps") is not None else None),
+        "fastest_5000_round_distance_m": (float(fastest_5000["distance_m"]) if fastest_5000 and fastest_5000.get("distance_m") is not None else None),
+    }
+
+
+def _extract_next_data_payload(html_txt: str) -> Optional[dict]:
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', str(html_txt or ""), re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(html.unescape(m.group(1)))
+    except Exception:
+        return None
+
+
+def _extract_round_distance_from_guess(guess: dict) -> Optional[float]:
+    candidates = [
+        guess.get("distance"),
+        guess.get("distanceInMeters"),
+        guess.get("distanceMeters"),
+        guess.get("distanceInMetres"),
+        guess.get("distanceMetres"),
+        guess.get("meters"),
+        guess.get("metres"),
+    ]
+    for cand in candidates:
+        if cand is None or isinstance(cand, bool):
+            continue
+        if isinstance(cand, (int, float)):
+            if math.isfinite(float(cand)):
+                return float(cand)
+            continue
+        try:
+            return float(str(cand).replace(",", "").strip())
+        except Exception:
+            pass
+
+    for key in ("player", "guess", "result"):
+        sub = guess.get(key)
+        if isinstance(sub, dict):
+            v = _extract_round_distance_from_guess(sub)
+            if v is not None:
+                return v
+    return None
+
+
+def _extract_round_steps_from_guess(guess: dict) -> Optional[int]:
+    candidates = [
+        guess.get("steps"),
+        guess.get("stepsCount"),
+        guess.get("moveCount"),
+        guess.get("moves"),
+    ]
+    for cand in candidates:
+        v = _parse_int_maybe(cand)
+        if v is not None:
+            return v
+
+    for key in ("player", "guess", "result"):
+        sub = guess.get(key)
+        if isinstance(sub, dict):
+            v = _extract_round_steps_from_guess(sub)
+            if v is not None:
+                return v
+    return None
+
+
+def extract_round_metrics_from_payload(game_payload: Any) -> dict:
+    if not isinstance(game_payload, dict):
+        return {}
+
+    candidate_lists: List[Any] = []
+    player_obj = game_payload.get("player")
+    if isinstance(player_obj, dict):
+        candidate_lists.extend(
+            [
+                player_obj.get("guesses"),
+                player_obj.get("rounds"),
+                player_obj.get("guessResults"),
+            ]
+        )
+    candidate_lists.extend([game_payload.get("rounds"), game_payload.get("guesses")])
+
+    round_rows: List[dict] = []
+    for cand in candidate_lists:
+        if not isinstance(cand, list):
+            continue
+        for guess in cand:
+            if not isinstance(guess, dict):
+                continue
+            pts = _extract_round_points_from_guess(guess)
+            time_s = _extract_round_time_from_guess(guess)
+            distance_m = _extract_round_distance_from_guess(guess)
+            steps = _extract_round_steps_from_guess(guess)
+            if pts is None and time_s is None and distance_m is None and steps is None:
+                continue
+            round_rows.append(
+                {
+                    "pts": pts,
+                    "distance_m": distance_m,
+                    "time_s": time_s,
+                    "steps": steps,
+                }
+            )
+        if round_rows:
+            break
+
+    return _build_player_metrics_from_round_rows(round_rows) if round_rows else {}
+
+
+def _iter_next_data_player_guess_lists(obj: Any) -> Iterable[Tuple[str, List[dict]]]:
+    stack = [obj]
+    seen: set[int] = set()
+    yielded: set[Tuple[str, int]] = set()
+    while stack:
+        cur = stack.pop()
+        cur_id = id(cur)
+        if cur_id in seen:
+            continue
+        seen.add(cur_id)
+
+        if isinstance(cur, dict):
+            nick = cur.get("nick")
+            guesses = cur.get("guesses")
+            if isinstance(nick, str) and nick.strip() and isinstance(guesses, list):
+                key = (nick.strip(), id(guesses))
+                if key not in yielded:
+                    yielded.add(key)
+                    yield nick.strip(), guesses
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def parse_result_metrics_next_data(html_txt: str) -> Dict[str, dict]:
+    payload = _extract_next_data_payload(html_txt)
+    if not isinstance(payload, dict):
+        return {}
+
+    out: Dict[str, dict] = {}
+    page_props = (
+        payload.get("props", {}).get("pageProps", {})
+        if isinstance(payload.get("props"), dict)
+        else {}
+    )
+    root = page_props if isinstance(page_props, dict) else payload
+
+    for player, guesses in _iter_next_data_player_guess_lists(root):
+        round_rows: List[dict] = []
+        for guess in guesses:
+            if not isinstance(guess, dict):
+                continue
+            pts = _extract_round_points_from_guess(guess)
+            time_s = _extract_round_time_from_guess(guess)
+            distance_m = _extract_round_distance_from_guess(guess)
+            steps = _extract_round_steps_from_guess(guess)
+            if pts is None and time_s is None and distance_m is None and steps is None:
+                continue
+            round_rows.append(
+                {
+                    "pts": pts,
+                    "distance_m": distance_m,
+                    "time_s": time_s,
+                    "steps": steps,
+                }
+            )
+
+        if not round_rows:
+            continue
+        out[player] = _build_player_metrics_from_round_rows(round_rows)
+
+    return out
+
+
+def _merge_result_metrics(primary: Dict[str, dict], secondary: Dict[str, dict]) -> Dict[str, dict]:
+    if not primary:
+        return dict(secondary)
+    if not secondary:
+        return dict(primary)
+
+    merged: Dict[str, dict] = {}
+    for player in set(primary) | set(secondary):
+        base = dict(secondary.get(player, {}))
+        base.update({k: v for k, v in primary.get(player, {}).items() if v is not None})
+        merged[player] = base
+    return merged
+
+
+def parse_result_metrics_html(html_txt: str) -> Dict[str, dict]:
+    out: Dict[str, dict] = {}
+    if "coordinate-results_player__" not in str(html_txt or ""):
+        return out
+
+    segments = re.split(r'<div class="coordinate-results_rowDivider__[^"]*"></div>', html_txt)
+    for seg in segments:
+        if "coordinate-results_player__" not in seg:
+            continue
+
+        nick_match = re.search(r'<div class="user-nick_nick__[^"]*">(.*?)</div>', seg, re.S)
+        if not nick_match:
+            continue
+        player = _clean_html_text(nick_match.group(1)).strip()
+        if not player:
+            continue
+
+        blocks = re.findall(
+            r'<div class="score-cell_score__[^"]*">(.*?)</div>\s*<div class="score-cell_scoreDetails__[^"]*">(.*?)</div>',
+            seg,
+            re.S,
+        )
+        if not blocks:
+            continue
+
+        round_rows: List[dict] = []
+        for score_html, details_html in blocks[:-1]:
+            spans = re.findall(r"<span>(.*?)</span>", details_html, re.S)
+            round_rows.append(
+                {
+                    "pts": _parse_score_points_text(score_html),
+                    "distance_m": _parse_distance_meters(spans[0]) if len(spans) >= 1 else None,
+                    "time_s": _parse_duration_seconds(spans[1]) if len(spans) >= 2 else None,
+                    "steps": _parse_steps_count(spans[2]) if len(spans) >= 3 else None,
+                }
+            )
+
+        total_spans = re.findall(r"<span>(.*?)</span>", blocks[-1][1], re.S)
+        total_distance_m = _parse_distance_meters(total_spans[0]) if len(total_spans) >= 1 else None
+        total_steps = _parse_steps_count(total_spans[2]) if len(total_spans) >= 3 else None
+        metrics = _build_player_metrics_from_round_rows(round_rows)
+        metrics["total_distance_m"] = total_distance_m if total_distance_m is not None else metrics.get("total_distance_m")
+        metrics["total_steps"] = total_steps if total_steps is not None else metrics.get("total_steps")
+        out[player] = metrics
+    return out
+
+
+def fetch_result_metrics_for_map(
+    session: requests.Session,
+    challenge_token: str,
+    timeout: float,
+    debug: bool,
+) -> Dict[str, dict]:
+    endpoints = [
+        f"https://www.geoguessr.com/results/{challenge_token}",
+        f"https://www.geoguessr.com/challenge/{challenge_token}",
+    ]
+    for url in endpoints:
+        try:
+            html_txt = http_get_text(session, url, timeout=timeout, debug=debug)
+            parsed_next_data = parse_result_metrics_next_data(html_txt)
+            parsed_html = parse_result_metrics_html(html_txt)
+            parsed = _merge_result_metrics(parsed_html, parsed_next_data)
+            if parsed:
+                return parsed
+        except Exception as e:
+            debug_print(debug, f"[result-metrics] endpoint failed: {url} -> {e}")
+            continue
+    return {}
 
 
 # ============================================================
@@ -1024,7 +1384,7 @@ def build_week_entries(
     if dump_json:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
-    played_at_cache: Dict[str, Optional[int]] = {}
+    game_payload_cache: Dict[str, Optional[dict]] = {}
 
     for map_idx, url in enumerate(urls, start=1):
         token = extract_token(url)
@@ -1032,6 +1392,7 @@ def build_week_entries(
         rule_text = ""
         mode_category = "unknown"
         is_sweden = map_idx in set(week.sweden_maps)
+        html_metrics_by_player: Dict[str, dict] = {}
         try:
             items = fetch_highscores_items(
                 session=session,
@@ -1074,6 +1435,7 @@ def build_week_entries(
                 map_name = str(game0.get("mapName") or "").strip()
                 rule_text = rule_text_from_game(game0)
                 mode_category = mode_category_from_game(game0)
+                html_metrics_by_player = fetch_result_metrics_for_map(session, token, timeout=timeout, debug=debug)
             except Exception:
                 rule_text = ""
         else:
@@ -1105,21 +1467,38 @@ def build_week_entries(
             pts = total_points_from_item(it)
             ttime = total_time_from_item(it)
             best_round_pts, best_round_time, fastest_5000_round_time = extract_round_stats_from_item(it)
+            html_metrics = html_metrics_by_player.get(name, {})
 
-            # played_at: requires extra call using game token
+            try:
+                game_token = it["game"].get("token")
+            except Exception:
+                game_token = None
+
+            game_payload: Optional[dict] = None
+            api_metrics: Dict[str, Any] = {}
+            if isinstance(game_token, str) and game_token:
+                if game_token in game_payload_cache:
+                    game_payload = game_payload_cache[game_token]
+                else:
+                    game_payload = fetch_game_details_payload(session, game_token, timeout=timeout, debug=debug)
+                    game_payload_cache[game_token] = game_payload
+                if isinstance(game_payload, dict):
+                    api_metrics = extract_round_metrics_from_payload(game_payload)
+
+            merged_metrics = dict(html_metrics)
+            if api_metrics:
+                merged_metrics = _merge_result_metrics({"_player": api_metrics}, {"_player": html_metrics}).get("_player", {})
+
+            # played_at: reuse fetched game payload when available
             played_at: Optional[int] = None
             if fetch_played_at:
-                try:
-                    game_token = it["game"].get("token")
-                except Exception:
-                    game_token = None
-
                 if isinstance(game_token, str) and game_token:
-                    if game_token in played_at_cache:
-                        played_at = played_at_cache[game_token]
+                    if isinstance(game_payload, dict):
+                        played_at = extract_played_at_epoch(game_payload)
+                    elif game_token in game_payload_cache and isinstance(game_payload_cache[game_token], dict):
+                        played_at = extract_played_at_epoch(game_payload_cache[game_token])
                     else:
                         played_at = fetch_game_details_for_played_at(session, game_token, timeout=timeout, debug=debug)
-                        played_at_cache[game_token] = played_at
 
             if played_at is not None:
                 has_any_played_at = True
@@ -1138,6 +1517,12 @@ def build_week_entries(
                     best_round_pts=best_round_pts,
                     best_round_time=best_round_time,
                     fastest_5000_round_time=fastest_5000_round_time,
+                    total_distance_m=(float(merged_metrics.get("total_distance_m")) if merged_metrics.get("total_distance_m") is not None else None),
+                    total_steps=(int(merged_metrics.get("total_steps")) if merged_metrics.get("total_steps") is not None else None),
+                    avg_steps_per_round=(float(merged_metrics.get("avg_steps_per_round")) if merged_metrics.get("avg_steps_per_round") is not None else None),
+                    count_5000_rounds=(int(merged_metrics.get("count_5000_rounds")) if merged_metrics.get("count_5000_rounds") is not None else None),
+                    fastest_5000_round_steps=(int(merged_metrics.get("fastest_5000_round_steps")) if merged_metrics.get("fastest_5000_round_steps") is not None else None),
+                    fastest_5000_round_distance_m=(float(merged_metrics.get("fastest_5000_round_distance_m")) if merged_metrics.get("fastest_5000_round_distance_m") is not None else None),
                     played_at_epoch=played_at,
                 )
             )
@@ -1219,6 +1604,12 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
                     "best_round_pts",
                     "best_round_time",
                     "fastest_5000_round_time",
+                    "total_distance_m",
+                    "total_steps",
+                    "avg_steps_per_round",
+                    "count_5000_rounds",
+                    "fastest_5000_round_steps",
+                    "fastest_5000_round_distance_m",
                     "rank_best",
                     "borda_points",
                     "played_at_epoch",
@@ -1241,6 +1632,12 @@ def compute_week_tables(entries: List[Entry], tie_mode: str, map_meta_rows: Opti
         "best_round_pts": e.best_round_pts,
         "best_round_time": e.best_round_time,
         "fastest_5000_round_time": e.fastest_5000_round_time,
+        "total_distance_m": e.total_distance_m,
+        "total_steps": e.total_steps,
+        "avg_steps_per_round": e.avg_steps_per_round,
+        "count_5000_rounds": e.count_5000_rounds,
+        "fastest_5000_round_steps": e.fastest_5000_round_steps,
+        "fastest_5000_round_distance_m": e.fastest_5000_round_distance_m,
         "played_at_epoch": e.played_at_epoch,
     } for e in entries])
 
@@ -1737,6 +2134,362 @@ def format_seconds_compact(v: Any) -> str:
     return f"{mins} min {rem} s"
 
 
+def _series_zscore(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce").astype(float)
+    if s.empty:
+        return pd.Series(dtype=float, index=s.index)
+    mean = float(s.mean())
+    std = float(s.std(ddof=0))
+    if std <= 1e-9 or math.isnan(std):
+        return pd.Series([0.0] * len(s), index=s.index, dtype=float)
+    return (s - mean) / std
+
+
+def _series_index_0_100(series: pd.Series, *, higher_is_better: bool = True) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce").astype(float)
+    if s.empty:
+        return pd.Series(dtype=float, index=s.index)
+    lo = float(s.min())
+    hi = float(s.max())
+    if math.isnan(lo) or math.isnan(hi) or abs(hi - lo) <= 1e-9:
+        return pd.Series([50.0] * len(s), index=s.index, dtype=float)
+    scaled = 100.0 * (s - lo) / (hi - lo)
+    if not higher_is_better:
+        scaled = 100.0 - scaled
+    return scaled.clip(lower=0.0, upper=100.0)
+
+
+def _fill_color_from_scale(value: Any, *, low_rgb: Tuple[int, int, int], high_rgb: Tuple[int, int, int]) -> PatternFill:
+    v = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(v):
+        return WHITE
+    ratio = min(1.0, max(0.0, float(v) / 100.0))
+    rgb = tuple(
+        int(round(low + (high - low) * ratio))
+        for low, high in zip(low_rgb, high_rgb)
+    )
+    hex_color = "".join(f"{part:02X}" for part in rgb)
+    return PatternFill("solid", fgColor=hex_color)
+
+
+def _similarity_fill(value: Any) -> PatternFill:
+    v = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(v):
+        return WHITE
+    ratio = min(1.0, max(0.0, (float(v) + 1.0) / 2.0))
+    start = (244, 247, 251)
+    end = (42, 119, 212)
+    rgb = tuple(int(round(a + (b - a) * ratio)) for a, b in zip(start, end))
+    return PatternFill("solid", fgColor="".join(f"{part:02X}" for part in rgb))
+
+
+def style_feature_meta_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"feature_key": key, "feature_label": label, "weight": float(weight), "description": desc}
+            for key, label, weight, desc in STYLE_FEATURE_SPECS
+        ]
+    )
+
+
+def _style_player_subset(df_style: pd.DataFrame) -> pd.DataFrame:
+    if df_style.empty:
+        return df_style.copy()
+    subset = df_style[df_style.get("is_qualified", pd.Series(dtype=bool)).fillna(False)].copy()
+    if len(subset) >= 3:
+        return subset
+    return df_style.copy()
+
+
+def _weighted_style_feature_frame(df_style: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    players_df = _style_player_subset(df_style)
+    meta = style_feature_meta_df()
+    if players_df.empty:
+        return players_df, pd.DataFrame(columns=STYLE_VECTOR_COLUMNS), meta
+
+    frame = players_df[["player"] + STYLE_VECTOR_COLUMNS].copy()
+    for key, _, weight, _ in STYLE_FEATURE_SPECS:
+        frame[key] = _series_zscore(frame[key]).fillna(0.0) * float(weight)
+    return players_df, frame[["player"] + STYLE_VECTOR_COLUMNS], meta
+
+
+def compute_style_pca(df_style: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, float]]:
+    import numpy as np
+
+    players_df, weighted_frame, meta = _weighted_style_feature_frame(df_style)
+    empty_loadings = meta.assign(pc1_loading=0.0, pc2_loading=0.0)
+    if weighted_frame.empty or len(weighted_frame) < 3:
+        return pd.DataFrame(columns=["player", "pc1", "pc2"]), empty_loadings, {"pc1_pct": 0.0, "pc2_pct": 0.0}
+
+    x_mat = weighted_frame[STYLE_VECTOR_COLUMNS].to_numpy(dtype=float)
+    x_center = x_mat - x_mat.mean(axis=0, keepdims=True)
+    _, svals, vt = np.linalg.svd(x_center, full_matrices=False)
+    pcs = x_center @ vt.T[:, :2]
+
+    player_pca = players_df.copy()
+    player_pca["pc1"] = pcs[:, 0]
+    player_pca["pc2"] = pcs[:, 1]
+
+    exp = svals * svals
+    exp_ratio = exp / exp.sum() if float(exp.sum()) > 0 else exp
+    pc1_pct = float(exp_ratio[0] * 100.0) if len(exp_ratio) > 0 else 0.0
+    pc2_pct = float(exp_ratio[1] * 100.0) if len(exp_ratio) > 1 else 0.0
+
+    loadings = meta.copy()
+    loadings["pc1_loading"] = [float(vt[0, idx]) if vt.shape[0] > 0 else 0.0 for idx in range(len(loadings))]
+    loadings["pc2_loading"] = [float(vt[1, idx]) if vt.shape[0] > 1 else 0.0 for idx in range(len(loadings))]
+    return player_pca, loadings, {"pc1_pct": pc1_pct, "pc2_pct": pc2_pct}
+
+
+def _dominant_style_label(row: pd.Series) -> str:
+    values = {
+        "fivek_rate": float(pd.to_numeric(pd.Series([row.get("fivek_rate_index")]), errors="coerce").iloc[0] or 0.0),
+        "fivek_speed": float(pd.to_numeric(pd.Series([row.get("fivek_speed_index")]), errors="coerce").iloc[0] or 0.0),
+        "fivek_steps": float(pd.to_numeric(pd.Series([row.get("fivek_steps_moving_index")]), errors="coerce").iloc[0] or 0.0),
+        "best_eff": float(pd.to_numeric(pd.Series([row.get("best_round_efficiency_index")]), errors="coerce").iloc[0] or 0.0),
+        "time_eff": float(pd.to_numeric(pd.Series([row.get("map_time_efficiency_index")]), errors="coerce").iloc[0] or 0.0),
+        "consistency": float(pd.to_numeric(pd.Series([row.get("consistency_index")]), errors="coerce").iloc[0] or 0.0),
+        "clutch": float(pd.to_numeric(pd.Series([row.get("clutch_profile_index")]), errors="coerce").iloc[0] or 0.0),
+        "moving": float(pd.to_numeric(pd.Series([row.get("moving_strength")]), errors="coerce").iloc[0] or 0.0),
+        "no_move": float(pd.to_numeric(pd.Series([row.get("no_move_strength")]), errors="coerce").iloc[0] or 0.0),
+        "nmpz": float(pd.to_numeric(pd.Series([row.get("nmpz_strength")]), errors="coerce").iloc[0] or 0.0),
+        "specialization": float(pd.to_numeric(pd.Series([row.get("specialization_index")]), errors="coerce").iloc[0] or 0.0),
+    }
+
+    if values["fivek_rate"] >= 72.0 and values["fivek_speed"] >= 62.0 and values["fivek_steps"] >= 55.0:
+        return "5k-jagare"
+    if values["time_eff"] >= 70.0 and values["best_eff"] >= 62.0:
+        return "Effektiv avslutare"
+    if values["consistency"] >= 70.0 and values["time_eff"] < 62.0:
+        return "Metodisk & stabil"
+    if values["specialization"] >= 72.0:
+        if values["nmpz"] >= max(values["moving"], values["no_move"]):
+            return "NMPZ-specialist"
+        if values["no_move"] >= max(values["moving"], values["nmpz"]):
+            return "No move-specialist"
+        return "Moving-specialist"
+    if values["clutch"] >= 68.0 and values["consistency"] < 52.0:
+        return "Clutch & volatil"
+
+    mode_scores = {
+        "Moving-specialist": values["moving"],
+        "No move-specialist": values["no_move"],
+        "NMPZ-specialist": values["nmpz"],
+    }
+    top_mode = max(mode_scores, key=mode_scores.get)
+    if mode_scores[top_mode] >= 68.0:
+        return top_mode
+    return "Allround"
+
+
+def compute_style_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    base_style_cols = [
+        "player",
+        "maps_counted",
+        "weeks_counted",
+        "is_qualified",
+        "fivek_rate_index",
+        "fivek_speed_index",
+        "fivek_steps_moving_index",
+        "best_round_efficiency_index",
+        "map_time_efficiency_index",
+        "consistency_index",
+        "clutch_profile_index",
+        "moving_strength",
+        "no_move_strength",
+        "nmpz_strength",
+        "specialization_index",
+        "precision_support_index",
+        "style_archetype",
+    ] + STYLE_VECTOR_COLUMNS
+
+    if df_overview.empty:
+        return pd.DataFrame(columns=base_style_cols), pd.DataFrame()
+
+    dfo = df_overview.copy()
+    dfo["week_map_key"] = dfo["week"].astype(str) + "::" + dfo["map_index"].astype(str)
+    dfo["mode3"] = dfo.get("mode_category", pd.Series(index=dfo.index, dtype=object)).fillna("unknown").astype(str).apply(mode_category_label)
+    dfo["total_pts"] = pd.to_numeric(dfo.get("total_pts"), errors="coerce").fillna(0.0)
+    dfo["total_time"] = pd.to_numeric(dfo.get("total_time"), errors="coerce")
+    dfo["best_round_pts"] = pd.to_numeric(dfo.get("best_round_pts"), errors="coerce").fillna(0.0)
+    dfo["best_round_time"] = pd.to_numeric(dfo.get("best_round_time"), errors="coerce")
+    dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
+
+    dfo.loc[dfo["total_time"] >= 10**11, "total_time"] = pd.NA
+    dfo.loc[dfo["best_round_time"] >= 10**11, "best_round_time"] = pd.NA
+
+    map_stats = (
+        dfo.groupby("week_map_key", as_index=False)
+        .agg(
+            map_pts_mean=("total_pts", "mean"),
+            map_pts_std=("total_pts", lambda s: float(pd.to_numeric(s, errors="coerce").std(ddof=0) or 0.0)),
+            map_time_mean=("total_time", "mean"),
+            map_time_std=("total_time", lambda s: float(pd.to_numeric(s, errors="coerce").std(ddof=0) or 0.0)),
+            best_round_pts_mean=("best_round_pts", "mean"),
+            best_round_pts_std=("best_round_pts", lambda s: float(pd.to_numeric(s, errors="coerce").std(ddof=0) or 0.0)),
+            best_round_time_mean=("best_round_time", "mean"),
+            best_round_time_std=("best_round_time", lambda s: float(pd.to_numeric(s, errors="coerce").std(ddof=0) or 0.0)),
+        )
+    )
+    dfo = dfo.merge(map_stats, on="week_map_key", how="left")
+
+    pts_den = pd.to_numeric(dfo["map_pts_std"], errors="coerce").fillna(0.0).replace(0.0, 1.0)
+    time_den = pd.to_numeric(dfo["map_time_std"], errors="coerce").fillna(0.0).replace(0.0, 1.0)
+    best_pts_den = pd.to_numeric(dfo["best_round_pts_std"], errors="coerce").fillna(0.0).replace(0.0, 1.0)
+    best_time_den = pd.to_numeric(dfo["best_round_time_std"], errors="coerce").fillna(0.0).replace(0.0, 1.0)
+    dfo["pts_rel"] = (dfo["total_pts"] - pd.to_numeric(dfo["map_pts_mean"], errors="coerce").fillna(0.0)) / pts_den
+    dfo["time_rel"] = (pd.to_numeric(dfo["total_time"], errors="coerce").fillna(pd.to_numeric(dfo["map_time_mean"], errors="coerce").fillna(0.0)) - pd.to_numeric(dfo["map_time_mean"], errors="coerce").fillna(0.0)) / time_den
+    dfo["best_round_pts_rel"] = (dfo["best_round_pts"] - pd.to_numeric(dfo["best_round_pts_mean"], errors="coerce").fillna(0.0)) / best_pts_den
+    dfo["best_round_time_rel"] = (
+        pd.to_numeric(dfo["best_round_time"], errors="coerce").fillna(pd.to_numeric(dfo["best_round_time_mean"], errors="coerce").fillna(0.0))
+        - pd.to_numeric(dfo["best_round_time_mean"], errors="coerce").fillna(0.0)
+    ) / best_time_den
+    dfo["fivek_hit"] = dfo["fastest_5000_round_time"].notna().astype(float)
+    dfo["best_round_efficiency_row"] = dfo["best_round_pts_rel"] - 0.6 * dfo["best_round_time_rel"]
+    dfo["clutch_signal"] = 0.65 * dfo["fivek_hit"] + 0.35 * dfo["best_round_efficiency_row"]
+    dfo["fastest_5000_round_steps"] = pd.to_numeric(dfo.get("fastest_5000_round_steps"), errors="coerce")
+
+    base = (
+        dfo.groupby("player", as_index=False)
+        .agg(
+            maps_counted=("week_map_key", "nunique"),
+            weeks_counted=("week", "nunique"),
+            avg_time_sec=("total_time", "mean"),
+            avg_pts=("total_pts", "mean"),
+            map_time_efficiency_raw=("time_rel", lambda s: -float(pd.to_numeric(s, errors="coerce").mean() or 0.0)),
+            precision_support_raw=("pts_rel", "mean"),
+            fivek_rate_raw=("fivek_hit", "mean"),
+            median_5k_time=("fastest_5000_round_time", "median"),
+            best_round_efficiency_raw=("best_round_efficiency_row", "mean"),
+            clutch_profile_raw=("clutch_signal", "mean"),
+        )
+    )
+
+    mode_raw = (
+        dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
+        .groupby(["player", "mode3"], as_index=False)
+        .agg(mode_strength=("pts_rel", "mean"))
+    )
+    mode_pivot = pd.DataFrame(columns=["player", "moving_strength_raw", "no_move_strength_raw", "nmpz_strength_raw"])
+    if not mode_raw.empty:
+        mode_pivot = (
+            mode_raw.pivot_table(index="player", columns="mode3", values="mode_strength", aggfunc="mean")
+            .rename(columns={"Moving": "moving_strength_raw", "No move": "no_move_strength_raw", "NMPZ": "nmpz_strength_raw"})
+            .reset_index()
+        )
+
+    style_df = base.merge(mode_pivot, on="player", how="left")
+    for col in ("moving_strength_raw", "no_move_strength_raw", "nmpz_strength_raw"):
+        if col not in style_df.columns:
+            style_df[col] = 0.0
+        style_df[col] = pd.to_numeric(style_df[col], errors="coerce").fillna(0.0)
+
+    median_times = pd.to_numeric(style_df["median_5k_time"], errors="coerce")
+    if median_times.notna().any():
+        valid = median_times.dropna()
+        lo = float(valid.min())
+        hi = float(valid.max())
+        if abs(hi - lo) <= 1e-9:
+            speed_component = pd.Series([1.0 if pd.notna(v) else 0.0 for v in median_times], index=style_df.index, dtype=float)
+        else:
+            speed_component = median_times.apply(lambda v: 0.0 if pd.isna(v) else 1.0 - ((float(v) - lo) / (hi - lo)))
+    else:
+        speed_component = pd.Series([0.0] * len(style_df), index=style_df.index, dtype=float)
+    style_df["fivek_speed_raw"] = speed_component
+
+    moving_5k_steps = (
+        dfo[(dfo["mode3"] == "Moving") & dfo["fastest_5000_round_steps"].notna()]
+        .groupby("player", as_index=False)
+        .agg(moving_5k_steps_median=("fastest_5000_round_steps", "median"))
+    )
+    style_df = style_df.merge(moving_5k_steps, on="player", how="left")
+    moving_steps_series = pd.to_numeric(style_df.get("moving_5k_steps_median"), errors="coerce")
+    if moving_steps_series.notna().any():
+        valid_steps = moving_steps_series.dropna()
+        lo_steps = float(valid_steps.min())
+        hi_steps = float(valid_steps.max())
+        if abs(hi_steps - lo_steps) <= 1e-9:
+            steps_component = pd.Series([1.0 if pd.notna(v) else 0.0 for v in moving_steps_series], index=style_df.index, dtype=float)
+        else:
+            steps_component = moving_steps_series.apply(lambda v: 0.0 if pd.isna(v) else 1.0 - ((float(v) - lo_steps) / (hi_steps - lo_steps)))
+    else:
+        steps_component = pd.Series([0.0] * len(style_df), index=style_df.index, dtype=float)
+    style_df["fivek_steps_moving_raw"] = steps_component
+
+    mode_strength_cols = ["moving_strength_raw", "no_move_strength_raw", "nmpz_strength_raw"]
+    style_df["specialization_raw"] = style_df[mode_strength_cols].std(axis=1, ddof=0).fillna(0.0)
+
+    mode_consistency = (
+        dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
+        .groupby(["player", "mode3"], as_index=False)
+        .agg(mode_std=("pts_rel", lambda s: float(pd.to_numeric(s, errors="coerce").std(ddof=0) or 0.0)))
+    )
+    if mode_consistency.empty:
+        consistency_by_player = pd.DataFrame(columns=["player", "mean_mode_std"])
+    else:
+        consistency_by_player = (
+            mode_consistency.groupby("player", as_index=False)
+            .agg(mean_mode_std=("mode_std", "mean"))
+        )
+    style_df = style_df.merge(consistency_by_player, on="player", how="left")
+    style_df["consistency_raw"] = -pd.to_numeric(style_df.get("mean_mode_std"), errors="coerce").fillna(0.0)
+    style_df["total_pts_support_raw"] = _series_zscore(style_df["avg_pts"]).fillna(0.0)
+
+    style_df["is_qualified"] = (
+        (pd.to_numeric(style_df["maps_counted"], errors="coerce").fillna(0.0) >= STYLE_MIN_MAPS)
+        | (pd.to_numeric(style_df["weeks_counted"], errors="coerce").fillna(0.0) >= STYLE_MIN_WEEKS)
+    )
+
+    style_df["fivek_rate_index"] = _series_index_0_100(style_df["fivek_rate_raw"])
+    style_df["fivek_speed_index"] = _series_index_0_100(style_df["fivek_speed_raw"])
+    style_df["fivek_steps_moving_index"] = _series_index_0_100(style_df["fivek_steps_moving_raw"])
+    style_df["best_round_efficiency_index"] = _series_index_0_100(style_df["best_round_efficiency_raw"])
+    style_df["map_time_efficiency_index"] = _series_index_0_100(style_df["map_time_efficiency_raw"])
+    style_df["consistency_index"] = _series_index_0_100(style_df["consistency_raw"])
+    style_df["clutch_profile_index"] = _series_index_0_100(style_df["clutch_profile_raw"])
+    style_df["moving_strength"] = _series_index_0_100(style_df["moving_strength_raw"])
+    style_df["no_move_strength"] = _series_index_0_100(style_df["no_move_strength_raw"])
+    style_df["nmpz_strength"] = _series_index_0_100(style_df["nmpz_strength_raw"])
+    style_df["specialization_index"] = _series_index_0_100(style_df["specialization_raw"])
+    style_df["precision_support_index"] = _series_index_0_100(style_df["precision_support_raw"])
+    style_df["style_archetype"] = style_df.apply(_dominant_style_label, axis=1)
+
+    _, weighted_frame, _ = _weighted_style_feature_frame(style_df)
+    sim_df = pd.DataFrame()
+    if not weighted_frame.empty:
+        players = weighted_frame["player"].astype(str).tolist()
+        rows: List[dict] = []
+        vectors = weighted_frame[STYLE_VECTOR_COLUMNS].to_dict("records")
+        for i, player_i in enumerate(players):
+            vec_i = [float(vectors[i].get(col, 0.0) or 0.0) for col in STYLE_VECTOR_COLUMNS]
+            norm_i = math.sqrt(sum(v * v for v in vec_i))
+            row: Dict[str, Any] = {"player": player_i}
+            for j, player_j in enumerate(players):
+                vec_j = [float(vectors[j].get(col, 0.0) or 0.0) for col in STYLE_VECTOR_COLUMNS]
+                norm_j = math.sqrt(sum(v * v for v in vec_j))
+                denom = norm_i * norm_j
+                sim = 0.0 if denom <= 1e-9 else sum(a * b for a, b in zip(vec_i, vec_j)) / denom
+                row[player_j] = max(-1.0, min(1.0, float(sim)))
+            rows.append(row)
+        sim_df = pd.DataFrame(rows)
+
+    ordered_cols = base_style_cols + [
+        "avg_time_sec",
+        "avg_pts",
+        "median_5k_time",
+        "moving_5k_steps_median",
+        "mean_mode_std",
+    ]
+    for col in ordered_cols:
+        if col not in style_df.columns:
+            style_df[col] = ""
+    style_df = style_df[ordered_cols].sort_values(
+        ["is_qualified", "fivek_rate_index", "best_round_efficiency_index", "maps_counted", "player"],
+        ascending=[False, False, False, False, True],
+    ).reset_index(drop=True)
+    return style_df, sim_df
+
+
 # ============================================================
 # Excel output
 # ============================================================
@@ -2147,6 +2900,8 @@ def write_visualizations_sheet(
     wb: Workbook,
     df_overview: pd.DataFrame,
     df_total: pd.DataFrame,
+    df_style: pd.DataFrame,
+    df_similarity: pd.DataFrame,
     weeks: List[str],
     image_dir: Optional[Path] = None,
 ) -> None:
@@ -2165,10 +2920,14 @@ def write_visualizations_sheet(
         "V7: Poängfördelning per karttyp",
         "V8: Stabilitet vs nivå (std mot snittpoäng)",
         "V9: Veckotrend-heatmap (över/under eget snitt)",
-        "V10: PCA spelarmönster + bidrag till PC1/PC2",
-        "V11: Standardavvikelse per karttyp och spelare",
+        "V10: Stil-PCA + bidrag till PC1/PC2",
+        "V11: Featurevikter och PCA-komponenter",
         "V12: Placering vecka för vecka (kumulativ liga)",
         "V13: Ackumulerad ligapoäng vecka för vecka",
+        "V14: Spelstilslikhet heatmap",
+        "V15: 5k-effektivitet (frekvens vs fart)",
+        "V16: Steg för 5k Sverige",
+        "V17: Steg för 5k Världen",
     ]
     ws["A3"] = "Diagramöversikt:"
     ws["A3"].font = Font(bold=True, color="1B314B")
@@ -2660,140 +3419,95 @@ def write_visualizations_sheet(
     ax.set_title("V9: Veckotrend-heatmap (över/under eget snitt)")
     v9_path = _save_fig(fig, "V9_veckotrend_heatmap.png")
 
-    # V10: PCA med loadings
-    feat_rows: List[dict] = []
-    for player, grp in dfo.groupby("player"):
-        entry = {"player": str(player)}
-        for cat in ["Moving", "No move", "NMPZ", "Sverige", "Sverige Moving", "Sverige No Move"]:
-            if cat == "Moving":
-                sub = grp[grp["mode_category"] == "moving"]
-            elif cat == "No move":
-                sub = grp[grp["mode_category"] == "no_move"]
-            elif cat == "NMPZ":
-                sub = grp[grp["mode_category"] == "nmpz"]
-            elif cat == "Sverige":
-                sub = grp[grp["is_sweden"] & grp["mode_category"].isin(["moving", "no_move"])]
-            elif cat == "Sverige Moving":
-                sub = grp[grp["is_sweden"] & (grp["mode_category"] == "moving")]
-            else:
-                sub = grp[grp["is_sweden"] & (grp["mode_category"] == "no_move")]
-            entry[f"avg_pts_{cat}"] = float(sub["total_pts"].mean()) if not sub.empty else 0.0
-        entry["avg_time_min"] = float(grp["total_time"].mean()) / 60.0 if not grp.empty else 0.0
-        entry["std_pts"] = float(grp["total_pts"].std()) if len(grp) > 1 else 0.0
-        entry["maps"] = int(grp["week_map_key"].nunique())
-        feat_rows.append(entry)
-    feat_df = pd.DataFrame(feat_rows)
-    feature_cols = ["avg_pts_Moving", "avg_pts_No move", "avg_pts_NMPZ", "avg_pts_Sverige", "avg_time_min", "std_pts"]
-
-    fig = plt.figure(figsize=(13.2, 9.9))  # 4:3
-    gs = fig.add_gridspec(2, 2, width_ratios=[2.1, 1.0], wspace=0.34, hspace=0.34)
+    # V10: Stil-PCA med loadings och tolkning
+    style_pca_points, style_pca_loadings, style_pca_info = compute_style_pca(df_style)
+    fig = plt.figure(figsize=(13.2, 9.9))
+    gs = fig.add_gridspec(2, 2, width_ratios=[2.0, 1.1], hspace=0.34, wspace=0.34)
     ax_sc = fig.add_subplot(gs[:, 0])
     ax_l1 = fig.add_subplot(gs[0, 1])
     ax_l2 = fig.add_subplot(gs[1, 1])
 
-    if not feat_df.empty and len(feat_df) >= 3:
-        if expanded_players:
-            feat_df = feat_df[feat_df["player"].astype(str).isin(expanded_players)].copy()
-        elif qualified_players:
-            feat_df = feat_df[feat_df["player"].astype(str).isin(qualified_players)].copy()
-        if feat_df.empty:
-            feat_df = pd.DataFrame(feat_rows)
-        x_mat = feat_df[feature_cols].to_numpy(dtype=float)
-        x_center = x_mat - x_mat.mean(axis=0, keepdims=True)
-        scale = x_center.std(axis=0, keepdims=True)
-        scale[scale == 0] = 1.0
-        x_norm = x_center / scale
-
-        _, svals, vt = np.linalg.svd(x_norm, full_matrices=False)
-        pcs = x_norm @ vt.T[:, :2]
-        feat_df["pc1"] = pcs[:, 0]
-        feat_df["pc2"] = pcs[:, 1]
-
-        exp = svals * svals
-        exp_ratio = exp / exp.sum() if exp.sum() > 0 else exp
-        pc1_pct = float(exp_ratio[0] * 100.0) if len(exp_ratio) > 0 else 0.0
-        pc2_pct = float(exp_ratio[1] * 100.0) if len(exp_ratio) > 1 else 0.0
-
-        colors = [float(total_pts_dict.get(str(p), 0.0)) for p in feat_df["player"].tolist()]
-        sc = ax_sc.scatter(feat_df["pc1"], feat_df["pc2"], c=colors, cmap="viridis", s=50, alpha=0.85)
-        fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label="Total råpoäng")
-
+    if not style_pca_points.empty:
+        colors = style_pca_points["specialization_index"].fillna(50.0).tolist()
+        sizes = [38.0 + min(58.0, float(v) * 3.0) for v in style_pca_points["maps_counted"].fillna(0.0).tolist()]
+        sc = ax_sc.scatter(style_pca_points["pc1"], style_pca_points["pc2"], c=colors, cmap="viridis", s=sizes, alpha=0.86)
+        fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label="Specialiseringsindex")
         _annotate_all_points(
             ax_sc,
-            [float(x) for x in feat_df["pc1"].tolist()],
-            [float(x) for x in feat_df["pc2"].tolist()],
-            [str(x) for x in feat_df["player"].tolist()],
+            [float(x) for x in style_pca_points["pc1"].tolist()],
+            [float(x) for x in style_pca_points["pc2"].tolist()],
+            [str(x) for x in style_pca_points["player"].tolist()],
             fontsize=9,
         )
-        ax_sc.set_xlabel(f"PC1 ({pc1_pct:.1f}% förklarad varians)")
-        ax_sc.set_ylabel(f"PC2 ({pc2_pct:.1f}% förklarad varians)")
-        ax_sc.set_title("Spelare i PCA-rum")
+        ax_sc.set_xlabel(f"PC1 ({style_pca_info.get('pc1_pct', 0.0):.1f}% forklarad varians)")
+        ax_sc.set_ylabel(f"PC2 ({style_pca_info.get('pc2_pct', 0.0):.1f}% forklarad varians)")
 
-        load_pc1 = list(zip(feature_cols, vt[0, :len(feature_cols)]))
-        load_pc2 = list(zip(feature_cols, vt[1, :len(feature_cols)] if vt.shape[0] > 1 else np.zeros(len(feature_cols))))
-        load_pc1 = sorted(load_pc1, key=lambda x: abs(float(x[1])), reverse=True)
-        load_pc2 = sorted(load_pc2, key=lambda x: abs(float(x[1])), reverse=True)
+        load_pc1 = style_pca_loadings.reindex(style_pca_loadings["pc1_loading"].abs().sort_values(ascending=False).index).head(6)
+        load_pc2 = style_pca_loadings.reindex(style_pca_loadings["pc2_loading"].abs().sort_values(ascending=False).index).head(6)
 
-        y1 = list(range(len(load_pc1)))
-        ax_l1.barh(y1, [float(x[1]) for x in load_pc1], color="#2A77D4")
-        ax_l1.set_yticks(y1)
-        ax_l1.set_yticklabels([_safe_plot_label(x[0]) for x in load_pc1], fontsize=9)
+        ax_l1.barh(list(range(len(load_pc1))), load_pc1["pc1_loading"].astype(float).tolist(), color="#2A77D4")
+        ax_l1.set_yticks(list(range(len(load_pc1))))
+        ax_l1.set_yticklabels([_safe_plot_label(x) for x in load_pc1["feature_label"].tolist()], fontsize=9)
         ax_l1.invert_yaxis()
-        ax_l1.set_title("PC1 bidrag (loading)")
+        ax_l1.set_title("PC1: starkaste bidrag")
 
-        y2 = list(range(len(load_pc2)))
-        ax_l2.barh(y2, [float(x[1]) for x in load_pc2], color="#279B70")
-        ax_l2.set_yticks(y2)
-        ax_l2.set_yticklabels([_safe_plot_label(x[0]) for x in load_pc2], fontsize=9)
+        ax_l2.barh(list(range(len(load_pc2))), load_pc2["pc2_loading"].astype(float).tolist(), color="#279B70")
+        ax_l2.set_yticks(list(range(len(load_pc2))))
+        ax_l2.set_yticklabels([_safe_plot_label(x) for x in load_pc2["feature_label"].tolist()], fontsize=9)
         ax_l2.invert_yaxis()
-        ax_l2.set_title("PC2 bidrag (loading)")
+        ax_l2.set_title("PC2: starkaste bidrag")
+
+        pc1_top = ", ".join(load_pc1["feature_label"].head(3).tolist())
+        pc2_top = ", ".join(load_pc2["feature_label"].head(3).tolist())
+        ax_sc.text(
+            0.02,
+            0.02,
+            f"PC1 drivs mest av: {pc1_top}\nPC2 drivs mest av: {pc2_top}",
+            transform=ax_sc.transAxes,
+            fontsize=9,
+            bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
+        )
     else:
-        _empty_plot(ax_sc)
+        _empty_plot(ax_sc, "For fa kvalificerade spelare")
         _empty_plot(ax_l1)
         _empty_plot(ax_l2)
-    fig.suptitle("V10: PCA spelarmönster + bidrag till PC1/PC2", fontsize=12, y=0.99)
-    v10_path = _save_fig(fig, "V10_pca_spelarmonster_loadings.png", apply_tight_layout=False)
+    fig.suptitle("V10: Stil-PCA + bidrag till PC1/PC2", fontsize=12, y=0.99)
+    v10_path = _save_fig(fig, "V10_stil_pca_loadings.png", apply_tight_layout=False)
 
-    # V11: Standardavvikelse per karttyp och spelare
-    std_by_mode = (
-        dfo[dfo["mode3"].isin(["Moving", "No move", "NMPZ"])]
-        .groupby(["player", "mode3"], as_index=False)
-        .agg(std_pts=("total_pts", "std"))
+    # V11: Featurevikter och komponenter
+    feature_meta = style_feature_meta_df()
+    feature_merge = feature_meta.merge(
+        style_pca_loadings[["feature_key", "pc1_loading", "pc2_loading"]] if not style_pca_loadings.empty else pd.DataFrame(columns=["feature_key", "pc1_loading", "pc2_loading"]),
+        on="feature_key",
+        how="left",
     )
-    std_by_mode["std_pts"] = pd.to_numeric(std_by_mode["std_pts"], errors="coerce").fillna(0.0)
-    if expanded_players:
-        v11_players = sorted(expanded_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
-    elif qualified_players:
-        v11_players = sorted(qualified_players, key=lambda p: total_pts_dict.get(p, 0.0), reverse=True)
-    else:
-        v11_players = (
-            dfo.groupby("player", as_index=False)
-            .agg(maps=("week_map_key", "nunique"))
-            .sort_values("maps", ascending=False)["player"]
-            .astype(str).head(40).tolist()
-        )
-    v11_pivot = (
-        std_by_mode.pivot_table(index="player", columns="mode3", values="std_pts", aggfunc="mean")
-        .reindex(v11_players)
-        .fillna(0.0)
-    )
-    for col in ["Moving", "No move", "NMPZ"]:
-        if col not in v11_pivot.columns:
-            v11_pivot[col] = 0.0
-    v11_pivot = v11_pivot[["Moving", "No move", "NMPZ"]]
-    fig_w = max(BASE_FIG_W, min(16.0, 8.2 + 0.16 * max(1, len(v11_players))))
-    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
-    if not v11_pivot.empty:
-        im = ax.imshow(v11_pivot.values, aspect="auto", cmap="OrRd")
-        ax.set_xticks([0, 1, 2])
-        ax.set_xticklabels(["Moving", "No move", "NMPZ"])
-        ax.set_yticks(list(range(len(v11_pivot.index))))
-        ax.set_yticklabels([_safe_plot_label(p) for p in v11_pivot.index], fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Std i poäng")
-    else:
-        _empty_plot(ax)
-    ax.set_title("V11: Standardavvikelse per karttyp och spelare")
-    v11_path = _save_fig(fig, "V11_std_per_karttyp_spelare.png")
+    fig = plt.figure(figsize=(13.2, 9.9))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.1, 1.4], wspace=0.32)
+    ax_w = fig.add_subplot(gs[0, 0])
+    ax_t = fig.add_subplot(gs[0, 1])
+    ax_w.barh(list(range(len(feature_merge))), feature_merge["weight"].astype(float).tolist(), color="#A64D1F")
+    ax_w.set_yticks(list(range(len(feature_merge))))
+    ax_w.set_yticklabels([_safe_plot_label(x) for x in feature_merge["feature_label"].tolist()], fontsize=9)
+    ax_w.invert_yaxis()
+    ax_w.set_xlabel("Vikt i likhet/PCA")
+    ax_w.set_title("Featurevikter")
+
+    ax_t.axis("off")
+    lines = [
+        f"PC1 ({style_pca_info.get('pc1_pct', 0.0):.1f}%): "
+        + ", ".join(feature_merge.reindex(feature_merge["pc1_loading"].abs().sort_values(ascending=False).index)["feature_label"].head(4).tolist()),
+        f"PC2 ({style_pca_info.get('pc2_pct', 0.0):.1f}%): "
+        + ", ".join(feature_merge.reindex(feature_merge["pc2_loading"].abs().sort_values(ascending=False).index)["feature_label"].head(4).tolist()),
+        "",
+        "Likheten nedviktar totalpoang och uppviktar:",
+        "- 5k-frekvens och 5k-fart",
+        "- basta-runda-effektivitet",
+        "- no move / NMPZ / moving-profiler",
+        "- specialisering och konsistens",
+    ]
+    ax_t.text(0.0, 0.98, "\n".join(lines), va="top", fontsize=11)
+    ax_t.set_title("Vad PCA:n faktiskt visar")
+    v11_path = _save_fig(fig, "V11_featurevikter_och_pca_forklaring.png", apply_tight_layout=False)
 
     # V12/V13: Utveckling vecka for vecka (kumulativ liga)
     weekly_player_points = (
@@ -2874,11 +3588,138 @@ def write_visualizations_sheet(
     ax.set_title("V13: Ackumulerad ligapoäng vecka för vecka")
     v13_path = _save_fig(fig, "V13_ackumulerad_ligapoang_vecka_for_vecka.png")
 
+    # V14: Spelstilslikhet heatmap
+    style_heatmap_players = (
+        df_style[df_style.get("is_qualified", pd.Series(dtype=bool)).fillna(False)]
+        .head(STYLE_SIMILARITY_MAX_PLAYERS)["player"]
+        .astype(str).tolist()
+        if not df_style.empty else []
+    )
+    style_heatmap = pd.DataFrame()
+    if style_heatmap_players and not df_similarity.empty and "player" in df_similarity.columns:
+        style_heatmap = (
+            df_similarity.set_index("player")
+            .reindex(index=style_heatmap_players, columns=style_heatmap_players)
+        )
+
+    fig_w = max(BASE_FIG_W, min(16.0, 8.4 + 0.22 * max(1, len(style_heatmap_players))))
+    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
+    if not style_heatmap.empty:
+        im = ax.imshow(style_heatmap.values, aspect="auto", cmap="YlGnBu", vmin=-1.0, vmax=1.0)
+        ax.set_xticks(list(range(len(style_heatmap.columns))))
+        ax.set_xticklabels([_safe_plot_label(x) for x in style_heatmap.columns], rotation=35, ha="right", fontsize=9)
+        ax.set_yticks(list(range(len(style_heatmap.index))))
+        ax.set_yticklabels([_safe_plot_label(x) for x in style_heatmap.index], fontsize=9)
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Cosinuslikhet")
+    else:
+        _empty_plot(ax, "For fa kvalificerade spelare")
+    ax.set_title("V14: Spelstilslikhet heatmap")
+    v14_path = _save_fig(fig, "V14_spelstilslikhet_heatmap.png")
+
+    # V15: 5k-effektivitet
+    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
+    if not df_style.empty:
+        style_plot = _style_player_subset(df_style).copy()
+        if style_plot.empty:
+            style_plot = df_style.copy()
+        if not style_plot.empty:
+            colors = style_plot["nmpz_strength"].fillna(50.0).tolist()
+            sizes = [35.0 + min(55.0, float(v) * 3.0) for v in style_plot["maps_counted"].fillna(0.0).tolist()]
+            sc = ax.scatter(
+                style_plot["fivek_rate_index"].fillna(0.0),
+                style_plot["fivek_speed_index"].fillna(0.0),
+                c=colors,
+                cmap="viridis",
+                s=sizes,
+                alpha=0.86,
+            )
+            fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="NMPZ-styrka")
+            _annotate_all_points(
+                ax,
+                [float(x) for x in style_plot["fivek_rate_index"].tolist()],
+                [float(x) for x in style_plot["fivek_speed_index"].tolist()],
+                [str(x) for x in style_plot["player"].tolist()],
+                fontsize=9,
+            )
+            ax.set_xlabel("5k-frekvens")
+            ax.set_ylabel("5k-fart")
+        else:
+            _empty_plot(ax, "For fa spelare")
+    else:
+        _empty_plot(ax, "Ingen spelstilsdata")
+    ax.set_title("V15: 5k-effektivitet (frekvens vs fart)")
+    v15_path = _save_fig(fig, "V15_5k_effektivitet.png")
+
+    # V16/V17: Steg for 5k i moving, uppdelat pa Sverige / Varlden
+    dfo["fastest_5000_round_steps"] = pd.to_numeric(dfo.get("fastest_5000_round_steps"), errors="coerce")
+    dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
+    dfo["fastest_5000_round_distance_m"] = pd.to_numeric(dfo.get("fastest_5000_round_distance_m"), errors="coerce")
+    dfo["count_5000_rounds"] = pd.to_numeric(dfo.get("count_5000_rounds"), errors="coerce").fillna(0.0)
+
+    for tag, title, mask in [
+        ("V16", "V16: Steg för 5k Sverige", dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
+        ("V17", "V17: Steg för 5k Världen", (~dfo["is_sweden"]) & (dfo["mode_category"] == "moving")),
+    ]:
+        part = dfo[mask & dfo["fastest_5000_round_steps"].notna() & dfo["fastest_5000_round_time"].notna()].copy()
+        fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
+        out_path: Optional[Path] = None
+        if not part.empty:
+            by_player = (
+                part.groupby("player", as_index=False)
+                .agg(
+                    median_steps=("fastest_5000_round_steps", "median"),
+                    median_time=("fastest_5000_round_time", "median"),
+                    median_distance=("fastest_5000_round_distance_m", "median"),
+                    moving_5ks=("count_5000_rounds", "sum"),
+                )
+                .sort_values(["moving_5ks", "median_steps", "median_time"], ascending=[False, True, True])
+            )
+            colors = by_player["moving_5ks"].fillna(0.0).tolist()
+            sizes = [40.0 + min(90.0, float(v or 0.0) / 8.0) for v in by_player["median_distance"].fillna(0.0).tolist()]
+            sc = ax.scatter(
+                by_player["median_steps"].tolist(),
+                by_player["median_time"].tolist(),
+                c=colors,
+                cmap="viridis",
+                s=sizes,
+                alpha=0.84,
+                edgecolors="white",
+                linewidths=0.6,
+            )
+            fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="Antal moving-5k")
+            _annotate_all_points(
+                ax,
+                [float(x) for x in by_player["median_steps"].tolist()],
+                [float(x) for x in by_player["median_time"].tolist()],
+                [f"{p} ({int(c)})" for p, c in zip(by_player["player"].tolist(), by_player["moving_5ks"].tolist())],
+                fontsize=9,
+            )
+            ax.set_xlabel("Mediansteg för 5k (moving)")
+            ax.set_ylabel("Mediantid för 5k (s)")
+            fig.subplots_adjust(bottom=0.18)
+            fig.text(
+                0.5,
+                0.035,
+                "Färg = antal moving-5k   |   Storlek = medianavstånd till 5k",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
+            )
+        else:
+            _empty_plot(ax, "Ingen moving-5k-data")
+        ax.set_title(title)
+        out_path = _save_fig(fig, f"{tag}_steg_for_5k_{'sverige' if tag == 'V16' else 'varlden'}.png")
+        if tag == "V16":
+            v16_path = out_path
+        else:
+            v17_path = out_path
+
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
-    first_row = 21
+    first_row = max(26, len(viz_names) + 11)
     row_step = 31
-    for i in range(8):
+    for i in range(10):
         r = first_row + i * row_step
         anchors.append(f"A{r}")
         anchors.append(f"N{r}")
@@ -2899,6 +3740,10 @@ def write_visualizations_sheet(
         (v11_path, 720, 540),
         (v12_path, 720, 540),
         (v13_path, 720, 540),
+        (v14_path, 720, 540),
+        (v15_path, 720, 540),
+        (v16_path, 720, 540),
+        (v17_path, 720, 540),
     ]
 
     for idx, (img_path, w, h) in enumerate(image_specs):
@@ -3077,6 +3922,208 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
         ws.row_dimensions[r].height = 28 if is_subtle else 34
 
 
+def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.DataFrame) -> None:
+    ws = wb.create_sheet("Spelstil")
+    merge_and_style(ws, 1, 1, 1, 20, "Spelstilsanalys", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    ws["A2"] = (
+        "Likhet bygger pa en viktad cosinuslikhet dar 5k-formaga, effektivitet, "
+        "mode-profiler och stabilitet vager tyngre an totalpoang. "
+        f"Kvalificering: minst {STYLE_MIN_MAPS} kartor eller {STYLE_MIN_WEEKS} veckor."
+    )
+    ws["A2"].font = FONT_BODY_SUBTLE
+
+    if df_style.empty:
+        ws["A4"] = "Ingen data tillganglig for spelstilsanalys."
+        ws["A4"].font = Font(color="AA0000", bold=True)
+        return
+
+    feature_meta = style_feature_meta_df()
+    _, pca_loadings, pca_info = compute_style_pca(df_style)
+
+    headers = [
+        "#", "Spelare", "Arketyp", "Kartor", "Veckor", "Kval.",
+        "5k freq", "5k fart", "5k steg(M)", "Best-eff", "Tid-eff", "Konsistens",
+        "Moving", "No move", "NMPZ", "Spec.", "Lik 1", "Likhet", "Lik 2", "Likhet 2", "Prec.-stod",
+    ]
+    widths = {
+        1: 4.5, 2: 22.0, 3: 18.0, 4: 8.0, 5: 8.0, 6: 8.0,
+        7: 9.0, 8: 9.0, 9: 10.0, 10: 10.0, 11: 9.0, 12: 10.0,
+        13: 9.0, 14: 9.0, 15: 9.0, 16: 9.0, 17: 18.0, 18: 9.0, 19: 18.0, 20: 9.0,
+        21: 10.0,
+    }
+    set_col_widths(ws, widths)
+
+    header_row = 4
+    for c, h in enumerate(headers, start=1):
+        ws.cell(header_row, c).value = h
+        style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
+
+    ws.freeze_panes = "A5"
+
+    sim_lookup: Dict[str, List[Tuple[str, float]]] = {}
+    if not df_similarity.empty and "player" in df_similarity.columns:
+        for _, row in df_similarity.iterrows():
+            player = str(row.get("player", ""))
+            pairs: List[Tuple[str, float]] = []
+            for col in df_similarity.columns:
+                if col == "player":
+                    continue
+                val = pd.to_numeric(pd.Series([row.get(col)]), errors="coerce").iloc[0]
+                if pd.isna(val) or str(col) == player:
+                    continue
+                pairs.append((str(col), float(val)))
+            sim_lookup[player] = sorted(pairs, key=lambda item: item[1], reverse=True)
+
+    score_cols = {
+        7: "fivek_rate_index",
+        8: "fivek_speed_index",
+        9: "fivek_steps_moving_index",
+        10: "best_round_efficiency_index",
+        11: "map_time_efficiency_index",
+        12: "consistency_index",
+        13: "moving_strength",
+        14: "no_move_strength",
+        15: "nmpz_strength",
+        16: "specialization_index",
+    }
+    sorted_style = df_style.sort_values(
+        ["is_qualified", "fivek_rate_index", "best_round_efficiency_index", "maps_counted", "player"],
+        ascending=[False, False, False, False, True],
+    ).reset_index(drop=True)
+    for idx, row in enumerate(sorted_style.itertuples(index=False), start=1):
+        r = header_row + idx
+        base_fill = ROW_A if idx % 2 == 1 else ROW_B
+        fill = rank_row_fill(idx, base_fill)
+        ws.cell(r, 1).value = idx
+        ws.cell(r, 2).value = row.player
+        ws.cell(r, 3).value = row.style_archetype
+        ws.cell(r, 4).value = int(getattr(row, "maps_counted", 0) or 0)
+        ws.cell(r, 5).value = int(getattr(row, "weeks_counted", 0) or 0)
+        ws.cell(r, 6).value = "Ja" if bool(getattr(row, "is_qualified", False)) else "Nej"
+
+        for c in range(1, 7):
+            align = LEFT if c in (2, 3) else CENTER
+            style_cell(ws, r, c, fill=fill, font=FONT_BODY, align=align)
+
+        for c, key in score_cols.items():
+            val = float(pd.to_numeric(pd.Series([getattr(row, key)]), errors="coerce").iloc[0] or 0.0)
+            ws.cell(r, c).value = round(val, 1)
+            score_fill = _fill_color_from_scale(val, low_rgb=(246, 238, 228), high_rgb=(42, 119, 212))
+            style_cell(ws, r, c, fill=score_fill, font=FONT_BODY, align=CENTER)
+
+        matches = sim_lookup.get(str(row.player), [])
+        match_1 = matches[0] if len(matches) >= 1 else ("", float("nan"))
+        match_2 = matches[1] if len(matches) >= 2 else ("", float("nan"))
+        ws.cell(r, 17).value = match_1[0]
+        ws.cell(r, 18).value = "" if math.isnan(match_1[1]) else round(match_1[1], 3)
+        ws.cell(r, 19).value = match_2[0]
+        ws.cell(r, 20).value = "" if math.isnan(match_2[1]) else round(match_2[1], 3)
+        ws.cell(r, 21).value = round(float(pd.to_numeric(pd.Series([getattr(row, "precision_support_index")]), errors="coerce").iloc[0] or 0.0), 1)
+        style_cell(ws, r, 17, fill=fill, font=FONT_BODY, align=LEFT)
+        style_cell(ws, r, 18, fill=_similarity_fill(match_1[1]) if not math.isnan(match_1[1]) else fill, font=FONT_BODY, align=CENTER)
+        style_cell(ws, r, 19, fill=fill, font=FONT_BODY, align=LEFT)
+        style_cell(ws, r, 20, fill=_similarity_fill(match_2[1]) if not math.isnan(match_2[1]) else fill, font=FONT_BODY, align=CENTER)
+        style_cell(ws, r, 21, fill=_fill_color_from_scale(ws.cell(r, 21).value, low_rgb=(246, 238, 228), high_rgb=(42, 119, 212)), font=FONT_BODY, align=CENTER)
+
+    add_excel_table(
+        wb,
+        ws,
+        header_row=header_row,
+        start_col=1,
+        end_row=header_row + len(sorted_style),
+        end_col=21,
+        name_hint="SpelstilOversikt",
+    )
+
+    feature_start_col = 22
+    merge_and_style(ws, 1, feature_start_col, 1, feature_start_col + 4, "PCA / featureforklaring", fill=DARK, font=FONT_HDR_MED, align=CENTER)
+    feature_headers = ["Feature", "Vikt", "PC1", "PC2", "Tolkning"]
+    for offset, head in enumerate(feature_headers):
+        style_cell(ws, 3, feature_start_col + offset, fill=MID, font=FONT_HDR, align=CENTER)
+        ws.cell(3, feature_start_col + offset).value = head
+    set_col_widths(ws, {
+        feature_start_col: 22.0,
+        feature_start_col + 1: 8.0,
+        feature_start_col + 2: 8.0,
+        feature_start_col + 3: 8.0,
+        feature_start_col + 4: 42.0,
+    })
+
+    loadings_sorted = pca_loadings.copy()
+    if not loadings_sorted.empty:
+        loadings_sorted["_rank"] = loadings_sorted[["pc1_loading", "pc2_loading"]].abs().max(axis=1)
+        loadings_sorted = loadings_sorted.sort_values("_rank", ascending=False).drop(columns=["_rank"])
+    for idx, row in enumerate(loadings_sorted.itertuples(index=False), start=4):
+        ws.cell(idx, feature_start_col).value = getattr(row, "feature_label", "")
+        ws.cell(idx, feature_start_col + 1).value = round(float(getattr(row, "weight", 0.0) or 0.0), 2)
+        ws.cell(idx, feature_start_col + 2).value = round(float(getattr(row, "pc1_loading", 0.0) or 0.0), 3)
+        ws.cell(idx, feature_start_col + 3).value = round(float(getattr(row, "pc2_loading", 0.0) or 0.0), 3)
+        ws.cell(idx, feature_start_col + 4).value = getattr(row, "description", "")
+        for c in range(feature_start_col, feature_start_col + 5):
+            style_cell(ws, idx, c, fill=WHITE, font=FONT_BODY, align=LEFT if c in (feature_start_col, feature_start_col + 4) else CENTER)
+
+    pc1_top = ", ".join(loadings_sorted.sort_values("pc1_loading", ascending=False)["feature_label"].head(3).tolist()) if not loadings_sorted.empty else ""
+    pc2_top = ", ".join(loadings_sorted.sort_values("pc2_loading", ascending=False)["feature_label"].head(3).tolist()) if not loadings_sorted.empty else ""
+    ws.cell(2, feature_start_col).value = f"PC1 ({pca_info.get('pc1_pct', 0.0):.1f}%): {pc1_top or 'for lite data'}"
+    ws.cell(2, feature_start_col).font = FONT_BODY_SUBTLE
+    ws.cell(2, feature_start_col + 3).value = f"PC2 ({pca_info.get('pc2_pct', 0.0):.1f}%): {pc2_top or 'for lite data'}"
+    ws.cell(2, feature_start_col + 3).font = FONT_BODY_SUBTLE
+
+    matrix_start_row = max(header_row + len(sorted_style) + 4, 6 + len(loadings_sorted))
+    ws.cell(matrix_start_row, 1).value = "Likhetsmatris"
+    ws.cell(matrix_start_row, 1).font = Font(bold=True, color="1B314B")
+    ws.cell(matrix_start_row + 1, 1).value = "Visar kvalificerade spelare, begransat for lasbarhet."
+    ws.cell(matrix_start_row + 1, 1).font = FONT_BODY_SUBTLE
+
+    if df_similarity.empty or "player" not in df_similarity.columns:
+        ws.cell(matrix_start_row + 3, 1).value = "For fa kvalificerade spelare for likhetsmatris."
+        ws.cell(matrix_start_row + 3, 1).font = Font(color="AA0000", bold=True)
+        return
+
+    qualified_players = (
+        sorted_style[sorted_style["is_qualified"]]
+        .head(STYLE_SIMILARITY_MAX_PLAYERS)["player"]
+        .astype(str).tolist()
+    )
+    matrix = (
+        df_similarity.set_index("player")
+        .reindex(index=qualified_players, columns=qualified_players)
+    )
+
+    start_r = matrix_start_row + 3
+    start_c = 2
+    ws.cell(start_r, 1).value = "Spelare"
+    style_cell(ws, start_r, 1, fill=MID, font=FONT_HDR, align=CENTER)
+    for j, player in enumerate(qualified_players, start=start_c):
+        ws.cell(start_r, j).value = player
+        style_cell(ws, start_r, j, fill=MID, font=FONT_HDR, align=CENTER)
+        ws.column_dimensions[get_column_letter(j)].width = 11.0
+
+    for i, player in enumerate(qualified_players, start=1):
+        r = start_r + i
+        ws.cell(r, 1).value = player
+        style_cell(ws, r, 1, fill=MID, font=FONT_HDR, align=LEFT)
+        for j, col_player in enumerate(qualified_players, start=start_c):
+            value = matrix.loc[player, col_player] if (player in matrix.index and col_player in matrix.columns) else ""
+            if pd.isna(value):
+                value = ""
+            ws.cell(r, j).value = "" if value == "" else round(float(value), 3)
+            fill = _similarity_fill(value) if value != "" else WHITE
+            font = FONT_BODY if player != col_player else Font(color="FFFFFF", bold=True)
+            style_cell(ws, r, j, fill=fill, font=font, align=CENTER)
+
+    add_excel_table(
+        wb,
+        ws,
+        header_row=start_r,
+        start_col=1,
+        end_row=start_r + len(qualified_players),
+        end_col=start_c + len(qualified_players) - 1,
+        name_hint="SpelstilLikhet",
+        header_horizontal="center",
+    )
+
+
 def write_raw_sheet(wb: Workbook, df_overview: pd.DataFrame) -> None:
     ws = wb.create_sheet("Raw")
     if df_overview.empty:
@@ -3235,12 +4282,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Compute tables for ALL (unfiltered)
     df_overview_all, df_weekly_all, df_meta_all = compute_week_tables(all_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
     df_total_all, df_stats_all = compute_total_tables(df_overview_all)
+    df_style_all, df_similarity_all = compute_style_tables(df_overview_all)
 
     # Decide filtering
     can_filter = bool(deadlines_epoch) and bool(args.fetch_played_at) and any_played_at
 
     # Build filtered data (if possible)
-    df_overview_f = df_weekly_f = df_meta_f = df_total_f = df_stats_f = None
+    df_overview_f = df_weekly_f = df_meta_f = df_total_f = df_stats_f = df_style_f = df_similarity_f = None
     if can_filter:
         now_epoch = int(time.time())
         open_weeks = [w for w, dl in deadlines_epoch.items() if dl > now_epoch]
@@ -3255,6 +4303,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         df_overview_f, df_weekly_f, df_meta_f = compute_week_tables(filtered_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
         df_total_f, df_stats_f = compute_total_tables(df_overview_f)
+        df_style_f, df_similarity_f = compute_style_tables(df_overview_f)
         print(f"[FILTER] enabled. Filtered rows: {len(filtered_entries)} (from {len(all_entries)})")
     else:
         if deadlines_epoch and args.fetch_played_at:
@@ -3281,10 +4330,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels, sort_by=args.sort_by)
     write_stats_sheet(wb_all, df_stats_all, sort_by=args.sort_by)
     write_underligor_sheet(wb_all, df_overview_all, sort_by=args.sort_by)
+    write_style_sheet(wb_all, df_style_all, df_similarity_all)
     write_visualizations_sheet(
         wb_all,
         df_overview_all,
         df_total_all,
+        df_style_all,
+        df_similarity_all,
         week_labels,
         image_dir=out_all.parent / "visualizations" / out_all.stem,
     )
@@ -3294,7 +4346,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("[DONE] wrote:", actual_out_all)
 
     # Write FILTERED workbook (if available)
-    if can_filter and df_overview_f is not None and df_weekly_f is not None and df_meta_f is not None and df_total_f is not None and df_stats_f is not None:
+    if can_filter and df_overview_f is not None and df_weekly_f is not None and df_meta_f is not None and df_total_f is not None and df_stats_f is not None and df_style_f is not None and df_similarity_f is not None:
         out_f = Path(f"{args.out_base}_filtered.xlsx")
         wb_f = Workbook()
         wb_f.remove(wb_f.active)
@@ -3307,10 +4359,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels, sort_by=args.sort_by)
         write_stats_sheet(wb_f, df_stats_f, sort_by=args.sort_by)
         write_underligor_sheet(wb_f, df_overview_f, sort_by=args.sort_by)
+        write_style_sheet(wb_f, df_style_f, df_similarity_f)
         write_visualizations_sheet(
             wb_f,
             df_overview_f,
             df_total_f,
+            df_style_f,
+            df_similarity_f,
             week_labels,
             image_dir=out_f.parent / "visualizations" / out_f.stem,
         )

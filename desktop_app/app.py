@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import locale
 import math
 import os
 import queue
@@ -80,10 +81,159 @@ TABLE_SORT_OPTIONS = [
     ("Snitt pts/karta", "avg_pts"),
     ("Snitt poäng/karta", "avg_points"),
 ]
-TABLE_SORT_LABEL_TO_KEY = {label: key for label, key in TABLE_SORT_OPTIONS}
-TABLE_SORT_KEY_TO_LABEL = {key: label for label, key in TABLE_SORT_OPTIONS}
 DEFAULT_TABLE_SORT_KEY = "default"
 DEFAULT_SWEDEN_MAPS = "1,4"
+LANGUAGE_OPTIONS = [
+    ("Auto (system)", "auto"),
+    ("Svenska", "sv"),
+    ("English", "en"),
+]
+LANGUAGE_LABEL_TO_KEY = {label: key for label, key in LANGUAGE_OPTIONS}
+LANGUAGE_KEY_TO_LABEL = {key: label for label, key in LANGUAGE_OPTIONS}
+UI_TRANSLATIONS_EN = {
+    "GeoGuessr League Desktop": "GeoGuessr League Desktop",
+    "Desktop Edition": "Desktop Edition",
+    "Challenge-insamling och ligarapport i ett klick": "Challenge collection and league reporting in one click",
+    "1) Inloggning / miljövariabel": "1) Login / environment variable",
+    "Sätt GEOGUESSR_NCFA i appen": "Set GEOGUESSR_NCFA in app",
+    "Var hittar jag _ncfa?": "Where do I find _ncfa?",
+    "Spara i Windows (setx)": "Save in Windows (setx)",
+    "Behöver du hjälp första gången? Öppna guiden och följ samma steg som i README:n.": "Need help the first time? Open the guide and follow the same steps as in the README.",
+    "Språk:": "Language:",
+    "Auto använder operativsystemets språk. Språkvalet skickas vidare till generatorn direkt.": "Auto uses the operating system language. The selected language is passed directly to the generator.",
+    "2) Veckofiler": "2) Week files",
+    "Lägg till befintliga .txt-filer eller skapa nya. Varje rad i filen ska vara en challenge-länk.": "Add existing .txt files or create new ones. Each row in a file should contain a challenge link.",
+    "Vecka": "Week",
+    "Textfil": "Text file",
+    "Deadline (valfri)": "Deadline (optional)",
+    "Deadline (valfri):": "Deadline (optional):",
+    "Sverige-kartor": "Sweden maps",
+    "Lägg till befintliga filer": "Add existing files",
+    "Skapa ny veckofil": "Create new week file",
+    "Ändra deadline": "Edit deadline",
+    "Ändra Sverige-kartor": "Edit Sweden maps",
+    "Ta bort vald": "Remove selected",
+    "3) Körning": "3) Run",
+    "Output-bas:": "Output base:",
+    "Tidszon:": "Timezone:",
+    "Tie-läge:": "Tie mode:",
+    "Sortera tabeller:": "Sort tables:",
+    "Gäller Total, Stats och Underligor.": "Applies to Total, Stats, and Subleagues.",
+    "Obs: Tid används alltid som tie-break vid samma poäng. Tie-läge gäller bara exakt lika poäng + tid.": "Note: Time is always used as a tiebreak for equal points. Tie mode only applies to exactly equal points + time.",
+    "Hämta played_at (för deadline-filter)": "Fetch played_at (for deadline filter)",
+    "Behåll poster utan tidsstämpel": "Keep rows without timestamp",
+    "Hämta detaljerad moving/5k-statistik (långsammare)": "Fetch detailed moving/5k metrics (slower)",
+    "Skapa avancerad spelstil/5k-analys (långsammare)": "Create advanced style/5k analysis (slower)",
+    "Debug-logg": "Debug log",
+    "Kör och skapa Excel": "Run and create Excel",
+    "Redigera Information-flik": "Edit Information sheet",
+    "Öppna projektmapp": "Open project folder",
+    "Logg": "Log",
+    "Appen startad.": "App started.",
+    "Tips: skapa veckofiler i appen, eller lägg till befintliga .txt-filer.": "Tip: create week files in the app, or add existing .txt files.",
+    "Redo": "Ready",
+    "Standard (Poäng)": "Standard (Points)",
+    "Kartor": "Maps",
+    "Veckor": "Weeks",
+    "Snitt pts/karta": "Avg pts/map",
+    "Snitt poäng/karta": "Avg points/map",
+    "Kör...": "Running...",
+    "Körning pågår... hämtar och bearbetar data.": "Run in progress... fetching and processing data.",
+    "Klart.": "Done.",
+    "Klart med varningar.": "Done with warnings.",
+    "Klar.": "Done.",
+    "Körning misslyckades.": "Run failed.",
+    "Skapa veckofil": "Create week file",
+    "Vecka 1": "Week 1",
+    "Veckoetikett:": "Week label:",
+    "Filnamn:": "Filename:",
+    "Sverige-kartor:": "Sweden maps:",
+    "Exempel: 1,4": "Example: 1,4",
+    "Länkar (en per rad):": "Links (one per line):",
+    "Spara fil": "Save file",
+    "Avbryt": "Cancel",
+    "Fel": "Error",
+    "Veckoetikett måste anges.": "Week label is required.",
+    "Filnamn måste anges.": "Filename is required.",
+    "Minst en länk måste anges.": "At least one link is required.",
+    "Välj deadline": "Choose deadline",
+    "Datum:": "Date:",
+    "Tips: installera `tkcalendar` för popup-kalender.": "Tip: install `tkcalendar` for a popup calendar.",
+    "Tid (HH:MM):": "Time (HH:MM):",
+    "Rensa": "Clear",
+    "Spara": "Save",
+    "Ogiltigt datum eller klockslag.": "Invalid date or time.",
+    "Information-flik: konfiguration": "Information sheet: configuration",
+    "Ange en punkt per rad för Information-fliken.\nNär du klickar Spara skrivs config-filen över.\nNuvarande config sparas först som legacy-kopia med datum.": "Enter one bullet point per line for the Information sheet.\nWhen you click Save, the config file is overwritten.\nThe current config is first saved as a dated legacy copy.",
+    "Config-fil: {config}\nLegacy-mapp: {legacy}": "Config file: {config}\nLegacy folder: {legacy}",
+    "Återställ default": "Reset defaults",
+    "Spara (skriver över config)": "Save (overwrite config)",
+    "Lägg till minst en informationsrad.": "Add at least one information row.",
+    "Bekräfta överskrivning": "Confirm overwrite",
+    "Detta skriver över config-filen:\n{config}\n\nNuvarande config sparas först i:\n{legacy}\n\nVill du fortsätta?": "This will overwrite the config file:\n{config}\n\nThe current config is first saved in:\n{legacy}\n\nDo you want to continue?",
+    "Hitta _ncfa": "Find _ncfa",
+    "Så hittar du GeoGuessr-cookien _ncfa": "How to find the GeoGuessr _ncfa cookie",
+    "Guiden återanvänder samma steg som README:n. När du har kopierat värdet klistrar du in det i fältet i appen.": "This guide follows the same steps as the README. After copying the value, paste it into the field in the app.",
+    "1. Logga in i GeoGuessr": "1. Log in to GeoGuessr",
+    "Öppna GeoGuessr i din vanliga webbläsare och logga in som vanligt.": "Open GeoGuessr in your normal browser and log in as usual.",
+    "2. Öppna DevTools och gå till Cookies": "2. Open DevTools and go to Cookies",
+    "Tryck F12 och gå till Application -> Cookies -> https://www.geoguessr.com.": "Press F12 and go to Application -> Cookies -> https://www.geoguessr.com.",
+    "3. Leta upp _ncfa": "3. Find _ncfa",
+    "Markera raden med namnet _ncfa och kopiera dess value.": "Select the row named _ncfa and copy its value.",
+    "4. Klistra in värdet i appen": "4. Paste the value into the app",
+    "Klistra in cookien i _ncfa-fältet här i appen. Du kan sedan välja antingen att bara sätta den i appen eller spara den som Windows-variabel.": "Paste the cookie into the _ncfa field here in the app. You can then choose either to set it only in the app or save it as a Windows variable.",
+    "Stäng": "Close",
+    "Bild kunde inte laddas: {name}": "Could not load image: {name}",
+    "_ncfa saknas.": "_ncfa is missing.",
+    "Denna funktion är bara tillgänglig på Windows.": "This function is only available on Windows.",
+    "Kunde inte spara variabeln:\n{err}": "Could not save the variable:\n{err}",
+    "Välj URL-textfiler": "Choose URL text files",
+    "Textfiler": "Text files",
+    "Alla filer": "All files",
+    "Veckoetikett": "Week label",
+    "Ange veckonamn för:\n{name}": "Enter a week name for:\n{name}",
+    "Filen finns inte:\n{path}": "The file does not exist:\n{path}",
+    "Info": "Info",
+    "Markera en rad först.": "Select a row first.",
+    "Sverige-kartor": "Sweden maps",
+    "Ange kartnummer för Sverige i {label}.\nExempel: 1,4": "Enter the map numbers for Sweden in {label}.\nExample: 1,4",
+    "Kunde inte spara information-config. Se loggen för detaljer.": "Could not save the information config. See the log for details.",
+    "Information-config sparad.": "Information config saved.",
+    "Lägg till minst en veckofil.": "Add at least one week file.",
+    "Dessa veckofiler saknas:\n\n{files}": "These week files are missing:\n\n{files}",
+    "Kunde inte hitta ett skrivbart filnamn för output. Stäng eventuell öppen Excel-fil och försök igen.": "Could not find a writable filename for the output. Close any open Excel file and try again.",
+    "Outputfil låst": "Output file locked",
+    "En eller flera outputfiler är öppna/låsta och kunde inte skrivas över.\nSparar istället med suffix: {out_base}": "One or more output files are open/locked and could not be overwritten.\nSaving instead with suffix: {out_base}",
+    "Klart med varningar": "Done with warnings",
+    "Klart": "Done",
+    "Excel-filer skapades, men en eller flera veckor/kartor kunde inte hämtas fullt ut.\nSe loggen för detaljer.": "Excel files were created, but one or more weeks/maps could not be fully fetched.\nSee the log for details.",
+    "Excel-filer skapades.": "Excel files were created.",
+    "Körning misslyckades. Se loggen.": "The run failed. See the log.",
+    "Kunde inte öppna mappen:\n{ex}": "Could not open the folder:\n{ex}",
+    "Körning pågår": "Run in progress",
+    "En körning pågår fortfarande. Vill du verkligen avsluta appen?": "A run is still in progress. Do you really want to close the app?",
+}
+
+
+def _detect_system_language() -> str:
+    candidates = [
+        os.environ.get("LANG"),
+        os.environ.get("LC_ALL"),
+        os.environ.get("LC_MESSAGES"),
+    ]
+    try:
+        candidates.extend([locale.getlocale()[0], locale.getdefaultlocale()[0]])  # type: ignore[index]
+    except Exception:
+        pass
+    for candidate in candidates:
+        raw = str(candidate or "").strip().lower()
+        if not raw:
+            continue
+        if raw.startswith("sv"):
+            return "sv"
+        if raw.startswith("en"):
+            return "en"
+    return "en"
 
 
 def _scaled_window_size(root: tk.Misc, *, width_ratio: float, height_ratio: float, min_width: int, min_height: int, max_width_margin: int = 80, max_height_margin: int = 80) -> tuple[int, int]:
@@ -141,15 +291,16 @@ class WeekConfig:
 
 
 class CreateWeekFileDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc, on_save):
+    def __init__(self, master: tk.Misc, on_save, tr=lambda x: x):
         super().__init__(master)
-        self.title("Skapa veckofil")
+        self.tr = tr
+        self.title(self.tr("Skapa veckofil"))
         self.geometry("760x560")
         self.minsize(680, 520)
         self.configure(bg=BG_APP)
         self.on_save = on_save
 
-        self.label_var = tk.StringVar(value="Vecka 1")
+        self.label_var = tk.StringVar(value=self.tr("Vecka 1"))
         self.deadline_var = tk.StringVar(value="")
         self.filename_var = tk.StringVar(value="urls_week1.txt")
         self.sweden_maps_var = tk.StringVar(value=DEFAULT_SWEDEN_MAPS)
@@ -162,21 +313,21 @@ class CreateWeekFileDialog(tk.Toplevel):
         frm.columnconfigure(1, weight=1)
         frm.rowconfigure(6, weight=1)
 
-        ttk.Label(frm, text="Veckoetikett:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frm, text=self.tr("Veckoetikett:"), style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         label_entry = ttk.Entry(frm, textvariable=self.label_var, style="Modern.TEntry")
         label_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frm, text="Deadline (valfri):", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frm, text=self.tr("Deadline (valfri):"), style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         ttk.Entry(frm, textvariable=self.deadline_var, style="Modern.TEntry").grid(row=1, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frm, text="Filnamn:", style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frm, text=self.tr("Filnamn:"), style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         ttk.Entry(frm, textvariable=self.filename_var, style="Modern.TEntry").grid(row=2, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frm, text="Sverige-kartor:", style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frm, text=self.tr("Sverige-kartor:"), style="Field.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         ttk.Entry(frm, textvariable=self.sweden_maps_var, style="Modern.TEntry").grid(row=3, column=1, sticky="ew", pady=(0, 8))
-        ttk.Label(frm, text="Exempel: 1,4", style="Hint.TLabel").grid(row=4, column=1, sticky="w", pady=(0, 6))
+        ttk.Label(frm, text=self.tr("Exempel: 1,4"), style="Hint.TLabel").grid(row=4, column=1, sticky="w", pady=(0, 6))
 
-        ttk.Label(frm, text="Länkar (en per rad):", style="Field.TLabel").grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        ttk.Label(frm, text=self.tr("Länkar (en per rad):"), style="Field.TLabel").grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 4))
 
         self.links_txt = tk.Text(
             frm,
@@ -196,8 +347,8 @@ class CreateWeekFileDialog(tk.Toplevel):
         button_row.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         button_row.columnconfigure(0, weight=1)
 
-        ttk.Button(button_row, text="Spara fil", style="Accent.TButton", command=self.save).grid(row=0, column=1, sticky="e")
-        ttk.Button(button_row, text="Avbryt", style="Soft.TButton", command=self.destroy).grid(row=0, column=2, sticky="e", padx=(8, 0))
+        ttk.Button(button_row, text=self.tr("Spara fil"), style="Accent.TButton", command=self.save).grid(row=0, column=1, sticky="e")
+        ttk.Button(button_row, text=self.tr("Avbryt"), style="Soft.TButton", command=self.destroy).grid(row=0, column=2, sticky="e", padx=(8, 0))
 
         self.label_var.trace_add("write", self._on_label_changed)
         self.transient(master)
@@ -223,15 +374,15 @@ class CreateWeekFileDialog(tk.Toplevel):
         links = [line.strip() for line in raw_links.splitlines() if line.strip()]
 
         if not label:
-            messagebox.showerror("Fel", "Veckoetikett måste anges.", parent=self)
+            messagebox.showerror(self.tr("Fel"), self.tr("Veckoetikett måste anges."), parent=self)
             return
         if not filename:
-            messagebox.showerror("Fel", "Filnamn måste anges.", parent=self)
+            messagebox.showerror(self.tr("Fel"), self.tr("Filnamn måste anges."), parent=self)
             return
         if not filename.lower().endswith(".txt"):
             filename += ".txt"
         if not links:
-            messagebox.showerror("Fel", "Minst en länk måste anges.", parent=self)
+            messagebox.showerror(self.tr("Fel"), self.tr("Minst en länk måste anges."), parent=self)
             return
 
         WEEK_FILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,9 +394,10 @@ class CreateWeekFileDialog(tk.Toplevel):
 
 
 class DeadlineDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc, initial_value: str):
+    def __init__(self, master: tk.Misc, initial_value: str, tr=lambda x: x):
         super().__init__(master)
-        self.title("Välj deadline")
+        self.tr = tr
+        self.title(self.tr("Välj deadline"))
         self.geometry("430x220")
         self.resizable(False, False)
         self.configure(bg=BG_APP)
@@ -257,7 +409,7 @@ class DeadlineDialog(tk.Toplevel):
         frm.pack(fill="both", expand=True, padx=10, pady=10)
         frm.columnconfigure(1, weight=1)
 
-        ttk.Label(frm, text="Datum:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Label(frm, text=self.tr("Datum:"), style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
         if DateEntry is not None:
             self.date_picker = DateEntry(frm, date_pattern="yyyy-mm-dd", width=12)
             self.date_picker.grid(row=0, column=1, sticky="w", pady=(0, 8))
@@ -279,11 +431,11 @@ class DeadlineDialog(tk.Toplevel):
             ttk.Spinbox(date_row, from_=1, to=31, width=3, textvariable=self.day_var).pack(side="left")
             ttk.Label(
                 frm,
-                text="Tips: installera `tkcalendar` för popup-kalender.",
+                text=self.tr("Tips: installera `tkcalendar` för popup-kalender."),
                 style="Hint.TLabel",
             ).grid(row=1, column=1, sticky="w")
 
-        ttk.Label(frm, text="Tid (HH:MM):", style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+        ttk.Label(frm, text=self.tr("Tid (HH:MM):"), style="Field.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
         time_row = ttk.Frame(frm, style="Card.TFrame")
         time_row.grid(row=2, column=1, sticky="w", pady=(6, 0))
         self.hour_var = tk.IntVar(value=default_dt.hour)
@@ -294,9 +446,9 @@ class DeadlineDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frm, style="Card.TFrame")
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Rensa", style="Outline.TButton", command=self.clear_deadline).pack(side="left")
-        ttk.Button(buttons, text="Avbryt", style="Soft.TButton", command=self.cancel).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Spara", style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text=self.tr("Rensa"), style="Outline.TButton", command=self.clear_deadline).pack(side="left")
+        ttk.Button(buttons, text=self.tr("Avbryt"), style="Soft.TButton", command=self.cancel).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text=self.tr("Spara"), style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
 
         self.transient(master)
         self.grab_set()
@@ -340,7 +492,7 @@ class DeadlineDialog(tk.Toplevel):
                 minute=int(self.minute_var.get()),
             )
         except Exception:
-            messagebox.showerror("Fel", "Ogiltigt datum eller klockslag.", parent=self)
+            messagebox.showerror(self.tr("Fel"), self.tr("Ogiltigt datum eller klockslag."), parent=self)
             return
 
         self.result = dt.strftime("%Y-%m-%d %H:%M")
@@ -348,9 +500,10 @@ class DeadlineDialog(tk.Toplevel):
 
 
 class InformationConfigDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc, initial_rows: list[str], default_rows: list[str], config_path: Path, legacy_dir: Path):
+    def __init__(self, master: tk.Misc, initial_rows: list[str], default_rows: list[str], config_path: Path, legacy_dir: Path, tr=lambda x: x):
         super().__init__(master)
-        self.title("Information-flik: konfiguration")
+        self.tr = tr
+        self.title(self.tr("Information-flik: konfiguration"))
         self.geometry("980x700")
         self.minsize(860, 600)
         self.configure(bg=BG_APP)
@@ -369,18 +522,14 @@ class InformationConfigDialog(tk.Toplevel):
 
         ttk.Label(
             frm,
-            text=(
-                "Ange en punkt per rad för Information-fliken.\n"
-                "När du klickar Spara skrivs config-filen över.\n"
-                "Nuvarande config sparas först som legacy-kopia med datum."
-            ),
+            text=self.tr("Ange en punkt per rad för Information-fliken.\nNär du klickar Spara skrivs config-filen över.\nNuvarande config sparas först som legacy-kopia med datum."),
             style="Field.TLabel",
             justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         ttk.Label(
             frm,
-            text=f"Config-fil: {self.config_path}\nLegacy-mapp: {self.legacy_dir}",
+            text=self.tr("Config-fil: {config}\nLegacy-mapp: {legacy}").format(config=self.config_path, legacy=self.legacy_dir),
             style="Hint.TLabel",
             justify="left",
         ).grid(row=1, column=0, sticky="w", pady=(0, 8))
@@ -401,9 +550,9 @@ class InformationConfigDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frm, style="Card.TFrame")
         buttons.grid(row=3, column=0, sticky="e", pady=(12, 0))
-        ttk.Button(buttons, text="Återställ default", style="Outline.TButton", command=self.reset_default).pack(side="left")
-        ttk.Button(buttons, text="Avbryt", style="Soft.TButton", command=self.cancel).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Spara (skriver över config)", style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text=self.tr("Återställ default"), style="Outline.TButton", command=self.reset_default).pack(side="left")
+        ttk.Button(buttons, text=self.tr("Avbryt"), style="Soft.TButton", command=self.cancel).pack(side="left", padx=(8, 0))
+        ttk.Button(buttons, text=self.tr("Spara (skriver över config)"), style="Accent.TButton", command=self.save).pack(side="left", padx=(8, 0))
 
         self.transient(master)
         self.grab_set()
@@ -421,16 +570,12 @@ class InformationConfigDialog(tk.Toplevel):
         raw = self.text.get("1.0", "end")
         rows = [line.strip() for line in raw.splitlines() if line.strip()]
         if not rows:
-            messagebox.showerror("Fel", "Lägg till minst en informationsrad.", parent=self)
+            messagebox.showerror(self.tr("Fel"), self.tr("Lägg till minst en informationsrad."), parent=self)
             return
 
         should_save = messagebox.askyesno(
-            "Bekräfta överskrivning",
-            (
-                f"Detta skriver över config-filen:\n{self.config_path}\n\n"
-                f"Nuvarande config sparas först i:\n{self.legacy_dir}\n\n"
-                "Vill du fortsätta?"
-            ),
+            self.tr("Bekräfta överskrivning"),
+            self.tr("Detta skriver över config-filen:\n{config}\n\nNuvarande config sparas först i:\n{legacy}\n\nVill du fortsätta?").format(config=self.config_path, legacy=self.legacy_dir),
             parent=self,
         )
         if not should_save:
@@ -441,9 +586,10 @@ class InformationConfigDialog(tk.Toplevel):
 
 
 class NcfaHelpDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc):
+    def __init__(self, master: tk.Misc, tr=lambda x: x):
         super().__init__(master)
-        self.title("Hitta _ncfa")
+        self.tr = tr
+        self.title(self.tr("Hitta _ncfa"))
         width, height = _initial_help_dialog_size(self)
         self.geometry(f"{width}x{height}")
         self.minsize(760, 620)
@@ -507,16 +653,13 @@ class NcfaHelpDialog(tk.Toplevel):
 
         ttk.Label(
             content,
-            text="Så hittar du GeoGuessr-cookien _ncfa",
+            text=self.tr("Så hittar du GeoGuessr-cookien _ncfa"),
             style="Field.TLabel",
             font=("Segoe UI Semibold", 14),
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             content,
-            text=(
-                "Guiden återanvänder samma steg som README:n. "
-                "När du har kopierat värdet klistrar du in det i fältet i appen."
-            ),
+            text=self.tr("Guiden återanvänder samma steg som README:n. När du har kopierat värdet klistrar du in det i fältet i appen."),
             style="Hint.TLabel",
             wraplength=780,
             justify="left",
@@ -525,36 +668,33 @@ class NcfaHelpDialog(tk.Toplevel):
         self._add_step(
             content,
             row=2,
-            title="1. Logga in i GeoGuessr",
-            body="Öppna GeoGuessr i din vanliga webbläsare och logga in som vanligt.",
+            title=self.tr("1. Logga in i GeoGuessr"),
+            body=self.tr("Öppna GeoGuessr i din vanliga webbläsare och logga in som vanligt."),
         )
         self._add_step(
             content,
             row=3,
-            title="2. Öppna DevTools och gå till Cookies",
-            body="Tryck F12 och gå till Application -> Cookies -> https://www.geoguessr.com.",
+            title=self.tr("2. Öppna DevTools och gå till Cookies"),
+            body=self.tr("Tryck F12 och gå till Application -> Cookies -> https://www.geoguessr.com."),
             image_path=NCFA_HELP_IMAGES["application"],
         )
         self._add_step(
             content,
             row=4,
-            title="3. Leta upp _ncfa",
-            body="Markera raden med namnet _ncfa och kopiera dess value.",
+            title=self.tr("3. Leta upp _ncfa"),
+            body=self.tr("Markera raden med namnet _ncfa och kopiera dess value."),
             image_path=NCFA_HELP_IMAGES["cookie"],
         )
         self._add_step(
             content,
             row=5,
-            title="4. Klistra in värdet i appen",
-            body=(
-                "Klistra in cookien i _ncfa-fältet här i appen. "
-                "Du kan sedan välja antingen att bara sätta den i appen eller spara den som Windows-variabel."
-            ),
+            title=self.tr("4. Klistra in värdet i appen"),
+            body=self.tr("Klistra in cookien i _ncfa-fältet här i appen. Du kan sedan välja antingen att bara sätta den i appen eller spara den som Windows-variabel."),
         )
 
         buttons = ttk.Frame(content, style="Card.TFrame")
         buttons.grid(row=6, column=0, sticky="e", pady=(14, 0))
-        ttk.Button(buttons, text="Stäng", style="Accent.TButton", command=self.destroy).pack(side="left")
+        ttk.Button(buttons, text=self.tr("Stäng"), style="Accent.TButton", command=self.destroy).pack(side="left")
 
         self.transient(master)
         self.grab_set()
@@ -577,7 +717,7 @@ class NcfaHelpDialog(tk.Toplevel):
         else:
             ttk.Label(
                 card,
-                text=f"Bild kunde inte laddas: {image_path.name}",
+                text=self.tr("Bild kunde inte laddas: {name}").format(name=image_path.name),
                 style="Hint.TLabel",
             ).grid(row=2, column=0, sticky="w", pady=(8, 0))
 
@@ -634,7 +774,8 @@ class LeagueDesktopApp:
         self.out_base_var = tk.StringVar(value="Liga")
         self.tz_var = tk.StringVar(value="Europe/Stockholm")
         self.tie_var = tk.StringVar(value="average")
-        self.table_sort_var = tk.StringVar(value=TABLE_SORT_KEY_TO_LABEL[DEFAULT_TABLE_SORT_KEY])
+        self.language_var = tk.StringVar(value=LANGUAGE_KEY_TO_LABEL["auto"])
+        self.table_sort_var = tk.StringVar(value=TABLE_SORT_OPTIONS[0][0])
         self.fetch_played_at_var = tk.BooleanVar(value=False)
         self.keep_missing_time_var = tk.BooleanVar(value=False)
         self.fetch_detailed_round_metrics_var = tk.BooleanVar(value=True)
@@ -646,7 +787,88 @@ class LeagueDesktopApp:
         self._build_ui()
         self._ensure_information_config_exists()
         self._load_state()
+        self._apply_language_texts()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _selected_language_key(self) -> str:
+        return LANGUAGE_LABEL_TO_KEY.get(self.language_var.get().strip(), "auto")
+
+    def _effective_language_key(self) -> str:
+        selected = self._selected_language_key()
+        if selected == "auto":
+            return _detect_system_language()
+        return selected
+
+    def tr_ui(self, text: str) -> str:
+        if self._effective_language_key() == "en":
+            return UI_TRANSLATIONS_EN.get(text, text)
+        return text
+
+    def tr_uif(self, text: str, **kwargs) -> str:
+        return self.tr_ui(text).format(**kwargs)
+
+    def _table_sort_options_for_ui(self) -> list[tuple[str, str]]:
+        return [(self.tr_ui(label), key) for label, key in TABLE_SORT_OPTIONS]
+
+    def _table_sort_label_to_key(self) -> dict[str, str]:
+        return {label: key for label, key in self._table_sort_options_for_ui()}
+
+    def _table_sort_key_to_label(self) -> dict[str, str]:
+        return {key: label for label, key in self._table_sort_options_for_ui()}
+
+    def _on_language_changed(self, *_args) -> None:
+        self._apply_language_texts()
+
+    def _apply_language_texts(self) -> None:
+        self.root.title(self.tr_ui("GeoGuessr League Desktop"))
+        self.hero_badge_label.configure(text=self.tr_ui("Desktop Edition"))
+        self.hero_sub_label.configure(text=self.tr_ui("Challenge-insamling och ligarapport i ett klick"))
+        self.env_frame.configure(text=self.tr_ui("1) Inloggning / miljövariabel"))
+        self.env_btn.configure(text=self.tr_ui("Sätt GEOGUESSR_NCFA i appen"))
+        self.ncfa_help_btn.configure(text=self.tr_ui("Var hittar jag _ncfa?"))
+        self.save_windows_env_btn.configure(text=self.tr_ui("Spara i Windows (setx)"))
+        self.env_hint_label.configure(text=self.tr_ui("Behöver du hjälp första gången? Öppna guiden och följ samma steg som i README:n."))
+        self.language_label.configure(text=self.tr_ui("Språk:"))
+        self.language_hint_label.configure(text=self.tr_ui("Auto använder operativsystemets språk. Språkvalet skickas vidare till generatorn direkt."))
+        self.weeks_frame.configure(text=self.tr_ui("2) Veckofiler"))
+        self.weeks_help_label.configure(text=self.tr_ui("Lägg till befintliga .txt-filer eller skapa nya. Varje rad i filen ska vara en challenge-länk."))
+        self.week_tree.heading("label", text=self.tr_ui("Vecka"))
+        self.week_tree.heading("file", text=self.tr_ui("Textfil"))
+        self.week_tree.heading("deadline", text=self.tr_ui("Deadline (valfri)"))
+        self.week_tree.heading("sweden", text=self.tr_ui("Sverige-kartor"))
+        self.add_files_btn.configure(text=self.tr_ui("Lägg till befintliga filer"))
+        self.create_file_btn.configure(text=self.tr_ui("Skapa ny veckofil"))
+        self.edit_deadline_btn.configure(text=self.tr_ui("Ändra deadline"))
+        self.edit_sweden_btn.configure(text=self.tr_ui("Ändra Sverige-kartor"))
+        self.remove_btn.configure(text=self.tr_ui("Ta bort vald"))
+        self.options_frame.configure(text=self.tr_ui("3) Körning"))
+        self.output_label.configure(text=self.tr_ui("Output-bas:"))
+        self.tz_label.configure(text=self.tr_ui("Tidszon:"))
+        self.tie_label.configure(text=self.tr_ui("Tie-läge:"))
+        self.sort_label.configure(text=self.tr_ui("Sortera tabeller:"))
+        self.sort_hint_label.configure(text=self.tr_ui("Gäller Total, Stats och Underligor."))
+        self.tie_hint_label.configure(text=self.tr_ui("Obs: Tid används alltid som tie-break vid samma poäng. Tie-läge gäller bara exakt lika poäng + tid."))
+        current_sort_key = self._table_sort_label_to_key().get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY)
+        self.sort_combo.configure(values=[label for label, _ in self._table_sort_options_for_ui()])
+        self.table_sort_var.set(self._table_sort_key_to_label().get(current_sort_key, self.tr_ui("Standard (Poäng)")))
+        self.fetch_chk.configure(text=self.tr_ui("Hämta played_at (för deadline-filter)"))
+        self.keep_missing_chk.configure(text=self.tr_ui("Behåll poster utan tidsstämpel"))
+        self.round_metrics_chk.configure(text=self.tr_ui("Hämta detaljerad moving/5k-statistik (långsammare)"))
+        self.advanced_analytics_chk.configure(text=self.tr_ui("Skapa avancerad spelstil/5k-analys (långsammare)"))
+        self.debug_chk.configure(text=self.tr_ui("Debug-logg"))
+        self.run_btn.configure(text=self.tr_ui("Kör och skapa Excel"))
+        self.info_cfg_btn.configure(text=self.tr_ui("Redigera Information-flik"))
+        self.open_folder_btn.configure(text=self.tr_ui("Öppna projektmapp"))
+        self.log_frame.configure(text=self.tr_ui("Logg"))
+        progress_text = self.progress_var.get().strip()
+        if progress_text in {"Redo", "Ready"}:
+            self.progress_var.set(self.tr_ui("Redo"))
+        elif progress_text in {"Kör...", "Running..."}:
+            self.progress_var.set(self.tr_ui("Kör..."))
+        elif progress_text in {"Klart.", "Done."}:
+            self.progress_var.set(self.tr_ui("Klart."))
+        elif progress_text in {"Klart med varningar.", "Done with warnings."}:
+            self.progress_var.set(self.tr_ui("Klart med varningar."))
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -799,23 +1021,23 @@ class LeagueDesktopApp:
         outer.bind("<Enter>", self._bind_main_mousewheel)
         outer.bind("<Leave>", self._unbind_main_mousewheel)
 
-        env_frame = ttk.LabelFrame(outer, text="1) Inloggning / miljövariabel", style="Card.TLabelframe", padding=12)
-        env_frame.grid(row=0, column=0, sticky="ew")
-        env_frame.columnconfigure(1, weight=1)
-        ttk.Label(env_frame, text="_ncfa:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        self.ncfa_entry = ttk.Entry(env_frame, textvariable=self.ncfa_var, show="*", style="Modern.TEntry")
+        self.env_frame = ttk.LabelFrame(outer, text="1) Inloggning / miljövariabel", style="Card.TLabelframe", padding=12)
+        self.env_frame.grid(row=0, column=0, sticky="ew")
+        self.env_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.env_frame, text="_ncfa:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.ncfa_entry = ttk.Entry(self.env_frame, textvariable=self.ncfa_var, show="*", style="Modern.TEntry")
         self.ncfa_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
-        self.env_btn = ttk.Button(env_frame, text="Sätt GEOGUESSR_NCFA i appen", style="Accent.TButton", command=self.apply_ncfa_env)
+        self.env_btn = ttk.Button(self.env_frame, text="Sätt GEOGUESSR_NCFA i appen", style="Accent.TButton", command=self.apply_ncfa_env)
         self.env_btn.grid(row=0, column=2, padx=(8, 0))
         self.ncfa_help_btn = ttk.Button(
-            env_frame,
+            self.env_frame,
             text="Var hittar jag _ncfa?",
             style="Soft.TButton",
             command=self.open_ncfa_help,
         )
         self.ncfa_help_btn.grid(row=0, column=3, padx=(8, 0))
         self.save_windows_env_btn = ttk.Button(
-            env_frame,
+            self.env_frame,
             text="Spara i Windows (setx)",
             style="Outline.TButton",
             command=self.save_ncfa_to_windows_env,
@@ -824,25 +1046,44 @@ class LeagueDesktopApp:
         if not sys.platform.startswith("win"):
             self.save_windows_env_btn.configure(state="disabled")
 
-        ttk.Label(
-            env_frame,
+        self.env_hint_label = ttk.Label(
+            self.env_frame,
             text="Behöver du hjälp första gången? Öppna guiden och följ samma steg som i README:n.",
             style="Hint.TLabel",
-        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        )
+        self.env_hint_label.grid(row=1, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        self.language_label = ttk.Label(self.env_frame, text="Språk:", style="Field.TLabel")
+        self.language_label.grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(10, 0))
+        self.language_combo = ttk.Combobox(
+            self.env_frame,
+            style="Modern.TCombobox",
+            textvariable=self.language_var,
+            values=[label for label, _ in LANGUAGE_OPTIONS],
+            state="readonly",
+            width=18,
+        )
+        self.language_combo.grid(row=2, column=1, sticky="w", pady=(10, 0))
+        self.language_hint_label = ttk.Label(
+            self.env_frame,
+            text="Auto använder operativsystemets språk. Språkvalet skickas vidare till generatorn direkt.",
+            style="Hint.TLabel",
+        )
+        self.language_hint_label.grid(row=2, column=2, columnspan=3, sticky="w", pady=(10, 0))
 
-        weeks_frame = ttk.LabelFrame(outer, text="2) Veckofiler", style="Card.TLabelframe", padding=12)
-        weeks_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-        weeks_frame.columnconfigure(0, weight=1)
-        weeks_frame.rowconfigure(1, weight=1)
+        self.weeks_frame = ttk.LabelFrame(outer, text="2) Veckofiler", style="Card.TLabelframe", padding=12)
+        self.weeks_frame.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        self.weeks_frame.columnconfigure(0, weight=1)
+        self.weeks_frame.rowconfigure(1, weight=1)
 
         help_label = (
             "Lägg till befintliga .txt-filer eller skapa nya. "
             "Varje rad i filen ska vara en challenge-länk."
         )
-        ttk.Label(weeks_frame, text=help_label, style="Hint.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.weeks_help_label = ttk.Label(self.weeks_frame, text=help_label, style="Hint.TLabel")
+        self.weeks_help_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         cols = ("label", "file", "deadline", "sweden")
-        self.week_tree = ttk.Treeview(weeks_frame, style="Modern.Treeview", columns=cols, show="headings", height=9)
+        self.week_tree = ttk.Treeview(self.weeks_frame, style="Modern.Treeview", columns=cols, show="headings", height=9)
         self.week_tree.heading("label", text="Vecka")
         self.week_tree.heading("file", text="Textfil")
         self.week_tree.heading("deadline", text="Deadline (valfri)")
@@ -853,11 +1094,11 @@ class LeagueDesktopApp:
         self.week_tree.column("sweden", width=140, anchor="center")
         self.week_tree.grid(row=1, column=0, sticky="nsew")
 
-        tree_scroll = ttk.Scrollbar(weeks_frame, orient="vertical", command=self.week_tree.yview)
+        tree_scroll = ttk.Scrollbar(self.weeks_frame, orient="vertical", command=self.week_tree.yview)
         tree_scroll.grid(row=1, column=1, sticky="ns")
         self.week_tree.configure(yscrollcommand=tree_scroll.set)
 
-        week_buttons = ttk.Frame(weeks_frame, style="Card.TFrame")
+        week_buttons = ttk.Frame(self.weeks_frame, style="Card.TFrame")
         week_buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         self.add_files_btn = ttk.Button(week_buttons, text="Lägg till befintliga filer", style="Accent.TButton", command=self.add_existing_files)
         self.create_file_btn = ttk.Button(week_buttons, text="Skapa ny veckofil", style="Soft.TButton", command=self.open_create_dialog)
@@ -870,22 +1111,25 @@ class LeagueDesktopApp:
         self.edit_sweden_btn.pack(side="left", padx=(8, 0))
         self.remove_btn.pack(side="left", padx=(8, 0))
 
-        options_frame = ttk.LabelFrame(outer, text="3) Körning", style="Card.TLabelframe", padding=12)
-        options_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.options_frame = ttk.LabelFrame(outer, text="3) Körning", style="Card.TLabelframe", padding=12)
+        self.options_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         for i in range(6):
-            options_frame.columnconfigure(i, weight=1 if i in (1, 3) else 0)
+            self.options_frame.columnconfigure(i, weight=1 if i in (1, 3) else 0)
 
-        ttk.Label(options_frame, text="Output-bas:", style="Field.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.out_entry = ttk.Entry(options_frame, textvariable=self.out_base_var, style="Modern.TEntry")
+        self.output_label = ttk.Label(self.options_frame, text="Output-bas:", style="Field.TLabel")
+        self.output_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.out_entry = ttk.Entry(self.options_frame, textvariable=self.out_base_var, style="Modern.TEntry")
         self.out_entry.grid(row=0, column=1, sticky="ew", padx=(0, 14))
 
-        ttk.Label(options_frame, text="Tidszon:", style="Field.TLabel").grid(row=0, column=2, sticky="w", padx=(0, 8))
-        self.tz_entry = ttk.Entry(options_frame, textvariable=self.tz_var, style="Modern.TEntry")
+        self.tz_label = ttk.Label(self.options_frame, text="Tidszon:", style="Field.TLabel")
+        self.tz_label.grid(row=0, column=2, sticky="w", padx=(0, 8))
+        self.tz_entry = ttk.Entry(self.options_frame, textvariable=self.tz_var, style="Modern.TEntry")
         self.tz_entry.grid(row=0, column=3, sticky="ew", padx=(0, 14))
 
-        ttk.Label(options_frame, text="Tie-läge:", style="Field.TLabel").grid(row=0, column=4, sticky="w", padx=(0, 8))
+        self.tie_label = ttk.Label(self.options_frame, text="Tie-läge:", style="Field.TLabel")
+        self.tie_label.grid(row=0, column=4, sticky="w", padx=(0, 8))
         self.tie_combo = ttk.Combobox(
-            options_frame,
+            self.options_frame,
             style="Modern.TCombobox",
             textvariable=self.tie_var,
             values=["average", "dense", "min", "max"],
@@ -894,60 +1138,63 @@ class LeagueDesktopApp:
         )
         self.tie_combo.grid(row=0, column=5, sticky="w")
 
-        ttk.Label(options_frame, text="Sortera tabeller:", style="Field.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
+        self.sort_label = ttk.Label(self.options_frame, text="Sortera tabeller:", style="Field.TLabel")
+        self.sort_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0))
         self.sort_combo = ttk.Combobox(
-            options_frame,
+            self.options_frame,
             style="Modern.TCombobox",
             textvariable=self.table_sort_var,
-            values=[label for label, _ in TABLE_SORT_OPTIONS],
+            values=[label for label, _ in self._table_sort_options_for_ui()],
             state="readonly",
             width=24,
         )
         self.sort_combo.grid(row=1, column=1, sticky="w", pady=(8, 0))
-        ttk.Label(
-            options_frame,
+        self.sort_hint_label = ttk.Label(
+            self.options_frame,
             text="Gäller Total, Stats och Underligor.",
             style="Hint.TLabel",
-        ).grid(row=1, column=2, columnspan=4, sticky="w", pady=(8, 0))
+        )
+        self.sort_hint_label.grid(row=1, column=2, columnspan=4, sticky="w", pady=(8, 0))
 
-        ttk.Label(
-            options_frame,
+        self.tie_hint_label = ttk.Label(
+            self.options_frame,
             text="Obs: Tid används alltid som tie-break vid samma poäng. Tie-läge gäller bara exakt lika poäng + tid.",
             style="Hint.TLabel",
-        ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        )
+        self.tie_hint_label.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         self.fetch_chk = ttk.Checkbutton(
-            options_frame,
+            self.options_frame,
             text="Hämta played_at (för deadline-filter)",
             style="Card.TCheckbutton",
             variable=self.fetch_played_at_var,
         )
         self.keep_missing_chk = ttk.Checkbutton(
-            options_frame,
+            self.options_frame,
             text="Behåll poster utan tidsstämpel",
             style="Card.TCheckbutton",
             variable=self.keep_missing_time_var,
         )
         self.round_metrics_chk = ttk.Checkbutton(
-            options_frame,
+            self.options_frame,
             text="Hämta detaljerad moving/5k-statistik (långsammare)",
             style="Card.TCheckbutton",
             variable=self.fetch_detailed_round_metrics_var,
         )
         self.advanced_analytics_chk = ttk.Checkbutton(
-            options_frame,
+            self.options_frame,
             text="Skapa avancerad spelstil/5k-analys (långsammare)",
             style="Card.TCheckbutton",
             variable=self.advanced_analytics_var,
         )
-        self.debug_chk = ttk.Checkbutton(options_frame, text="Debug-logg", style="Card.TCheckbutton", variable=self.debug_var)
+        self.debug_chk = ttk.Checkbutton(self.options_frame, text="Debug-logg", style="Card.TCheckbutton", variable=self.debug_var)
         self.fetch_chk.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
         self.keep_missing_chk.grid(row=3, column=3, columnspan=2, sticky="w", pady=(8, 0))
         self.debug_chk.grid(row=3, column=5, sticky="w", pady=(8, 0))
         self.round_metrics_chk.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self.advanced_analytics_chk.grid(row=4, column=3, columnspan=3, sticky="w", pady=(6, 0))
 
-        run_row = ttk.Frame(options_frame, style="Card.TFrame")
+        run_row = ttk.Frame(self.options_frame, style="Card.TFrame")
         run_row.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(12, 0))
         self.run_btn = ttk.Button(run_row, text="Kör och skapa Excel", style="Accent.TButton", command=self.start_generation)
         self.info_cfg_btn = ttk.Button(run_row, text="Redigera Information-flik", style="Outline.TButton", command=self.open_information_config_dialog)
@@ -956,7 +1203,7 @@ class LeagueDesktopApp:
         self.info_cfg_btn.pack(side="left", padx=(8, 0))
         self.open_folder_btn.pack(side="left", padx=(8, 0))
 
-        progress_row = ttk.Frame(options_frame, style="Card.TFrame")
+        progress_row = ttk.Frame(self.options_frame, style="Card.TFrame")
         progress_row.grid(row=6, column=0, columnspan=6, sticky="ew", pady=(10, 0))
         progress_row.columnconfigure(0, weight=1)
         self.progress_bar = ttk.Progressbar(progress_row, mode="indeterminate")
@@ -964,13 +1211,13 @@ class LeagueDesktopApp:
         ttk.Label(progress_row, textvariable=self.progress_var, style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(5, 0))
         ttk.Label(progress_row, textvariable=self.progress_time_var, style="Hint.TLabel").grid(row=1, column=1, sticky="e", pady=(5, 0), padx=(12, 0))
 
-        log_frame = ttk.LabelFrame(outer, text="Logg", style="Card.TLabelframe", padding=12)
-        log_frame.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        self.log_frame = ttk.LabelFrame(outer, text="Logg", style="Card.TLabelframe", padding=12)
+        self.log_frame.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
+        self.log_frame.columnconfigure(0, weight=1)
+        self.log_frame.rowconfigure(0, weight=1)
 
         self.log_text = tk.Text(
-            log_frame,
+            self.log_frame,
             height=12,
             wrap="word",
             bg=LOG_BG,
@@ -984,12 +1231,14 @@ class LeagueDesktopApp:
             pady=8,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
-        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        log_scroll = ttk.Scrollbar(self.log_frame, orient="vertical", command=self.log_text.yview)
         log_scroll.grid(row=0, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=log_scroll.set)
 
-        self.log("Appen startad.")
-        self.log("Tips: skapa veckofiler i appen, eller lägg till befintliga .txt-filer.")
+        self.language_var.trace_add("write", self._on_language_changed)
+        self._apply_language_texts()
+        self.log(self.tr_ui("Appen startad."))
+        self.log(self.tr_ui("Tips: skapa veckofiler i appen, eller lägg till befintliga .txt-filer."))
         self.log(f"[STATE] Sparad konfiguration: {APP_STATE_PATH}")
 
     def _sync_main_scroll_region(self, _event=None) -> None:
@@ -1072,13 +1321,16 @@ class LeagueDesktopApp:
 
         txt_frame = ttk.Frame(parent, style="Hero.TFrame")
         txt_frame.grid(row=0, column=1, sticky="w")
-        ttk.Label(txt_frame, text="Desktop Edition", style="HeroBadge.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(txt_frame, text="GeoLeague Builder", style="HeroTitle.TLabel").grid(row=1, column=0, sticky="w")
-        ttk.Label(
+        self.hero_badge_label = ttk.Label(txt_frame, text="Desktop Edition", style="HeroBadge.TLabel")
+        self.hero_badge_label.grid(row=0, column=0, sticky="w")
+        self.hero_title_label = ttk.Label(txt_frame, text="GeoLeague Builder", style="HeroTitle.TLabel")
+        self.hero_title_label.grid(row=1, column=0, sticky="w")
+        self.hero_sub_label = ttk.Label(
             txt_frame,
             text="Challenge-insamling och ligarapport i ett klick",
             style="HeroSub.TLabel",
-        ).grid(row=2, column=0, sticky="w")
+        )
+        self.hero_sub_label.grid(row=2, column=0, sticky="w")
 
     def _draw_logo(self, canvas: tk.Canvas) -> None:
         bg = BG_HERO
@@ -1107,6 +1359,7 @@ class LeagueDesktopApp:
             self.env_btn,
             self.ncfa_help_btn,
             self.save_windows_env_btn,
+            self.language_combo,
             self.add_files_btn,
             self.create_file_btn,
             self.edit_deadline_btn,
@@ -1152,7 +1405,7 @@ class LeagueDesktopApp:
 
     def _start_running_feedback(self) -> None:
         self._run_started_at = time.monotonic()
-        self.progress_var.set("Körning pågår... hämtar och bearbetar data.")
+        self.progress_var.set(self.tr_ui("Körning pågår... hämtar och bearbetar data."))
         self.progress_time_var.set("00:00")
         self.progress_bar.start(10)
         if self._progress_job_id is None:
@@ -1179,13 +1432,13 @@ class LeagueDesktopApp:
         if self._log_poll_job_id is not None:
             self.root.after_cancel(self._log_poll_job_id)
             self._log_poll_job_id = None
-        self.progress_var.set("Klar." if ok else "Körning misslyckades.")
+        self.progress_var.set(self.tr_ui("Klar.") if ok else self.tr_ui("Körning misslyckades."))
         self._run_started_at = None
 
     def apply_ncfa_env(self) -> None:
         ncfa = self.ncfa_var.get().strip()
         if not ncfa:
-            messagebox.showerror("Fel", "_ncfa saknas.")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("_ncfa saknas."))
             return
         os.environ["GEOGUESSR_NCFA"] = ncfa
         self.log("[OK] GEOGUESSR_NCFA satt i app-processens miljö.")
@@ -1193,11 +1446,11 @@ class LeagueDesktopApp:
 
     def save_ncfa_to_windows_env(self) -> None:
         if not sys.platform.startswith("win"):
-            messagebox.showinfo("Info", "Denna funktion är bara tillgänglig på Windows.")
+            messagebox.showinfo(self.tr_ui("Info"), self.tr_ui("Denna funktion är bara tillgänglig på Windows."))
             return
         ncfa = self.ncfa_var.get().strip()
         if not ncfa:
-            messagebox.showerror("Fel", "_ncfa saknas.")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("_ncfa saknas."))
             return
         try:
             result = subprocess.run(
@@ -1214,16 +1467,16 @@ class LeagueDesktopApp:
             self._save_state()
         except subprocess.CalledProcessError as ex:
             err = (ex.stderr or ex.stdout or str(ex)).strip()
-            messagebox.showerror("Fel", f"Kunde inte spara variabeln:\n{err}")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_uif("Kunde inte spara variabeln:\n{err}", err=err))
 
     def open_ncfa_help(self) -> None:
-        NcfaHelpDialog(self.root)
+        NcfaHelpDialog(self.root, tr=self.tr_ui)
 
     def add_existing_files(self) -> None:
         paths = filedialog.askopenfilenames(
-            title="Välj URL-textfiler",
+            title=self.tr_ui("Välj URL-textfiler"),
             initialdir=str(ROOT_DIR),
-            filetypes=[("Textfiler", "*.txt"), ("Alla filer", "*.*")],
+            filetypes=[(self.tr_ui("Textfiler"), "*.txt"), (self.tr_ui("Alla filer"), "*.*")],
         )
         if not paths:
             return
@@ -1232,8 +1485,8 @@ class LeagueDesktopApp:
             file_path = Path(raw_path)
             default_label = self._guess_label_from_path(file_path)
             label = simpledialog.askstring(
-                "Veckoetikett",
-                f"Ange veckonamn för:\n{file_path.name}",
+                self.tr_ui("Veckoetikett"),
+                self.tr_uif("Ange veckonamn för:\n{name}", name=file_path.name),
                 initialvalue=default_label,
                 parent=self.root,
             )
@@ -1244,15 +1497,15 @@ class LeagueDesktopApp:
     def _guess_label_from_path(self, path: Path) -> str:
         digits = re.findall(r"\d+", path.stem)
         if digits:
-            return f"Vecka {digits[0]}"
+            return f"{self.tr_ui('Vecka')} {digits[0]}"
         return path.stem.replace("_", " ")
 
     def open_create_dialog(self) -> None:
-        CreateWeekFileDialog(self.root, on_save=self._insert_week)
+        CreateWeekFileDialog(self.root, on_save=self._insert_week, tr=self.tr_ui)
 
     def _insert_week(self, week: WeekConfig) -> None:
         if not week.file_path.exists():
-            messagebox.showerror("Fel", f"Filen finns inte:\n{week.file_path}")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_uif("Filen finns inte:\n{path}", path=week.file_path))
             return
         row_id = self.week_tree.insert("", "end", values=(week.label, str(week.file_path), week.deadline, week.effective_sweden_maps()))
         self.weeks_by_id[row_id] = week
@@ -1262,11 +1515,11 @@ class LeagueDesktopApp:
     def edit_selected_deadline(self) -> None:
         selected = self.week_tree.selection()
         if not selected:
-            messagebox.showinfo("Info", "Markera en rad först.")
+            messagebox.showinfo(self.tr_ui("Info"), self.tr_ui("Markera en rad först."))
             return
         row_id = selected[0]
         week = self.weeks_by_id[row_id]
-        dlg = DeadlineDialog(self.root, initial_value=week.deadline)
+        dlg = DeadlineDialog(self.root, initial_value=week.deadline, tr=self.tr_ui)
         self.root.wait_window(dlg)
         if dlg.result is None:
             return
@@ -1278,13 +1531,13 @@ class LeagueDesktopApp:
     def edit_selected_sweden_maps(self) -> None:
         selected = self.week_tree.selection()
         if not selected:
-            messagebox.showinfo("Info", "Markera en rad först.")
+            messagebox.showinfo(self.tr_ui("Info"), self.tr_ui("Markera en rad först."))
             return
         row_id = selected[0]
         week = self.weeks_by_id[row_id]
         value = simpledialog.askstring(
-            "Sverige-kartor",
-            f"Ange kartnummer för Sverige i {week.label}.\nExempel: 1,4",
+            self.tr_ui("Sverige-kartor"),
+            self.tr_uif("Ange kartnummer för Sverige i {label}.\nExempel: 1,4", label=week.label),
             initialvalue=week.effective_sweden_maps(),
             parent=self.root,
         )
@@ -1343,29 +1596,28 @@ class LeagueDesktopApp:
         return None
 
     def _default_information_rows(self) -> list[str]:
+        lang = self._effective_language_key()
         try:
-            rows = league_core.default_information_rows()
+            rows = league_core.default_information_rows(lang)
             if isinstance(rows, list) and rows:
                 return [str(x).strip() for x in rows if str(x).strip()]
         except Exception:
             pass
-        return [
-            "Ingen anmälan krävs - det är bara att spela veckans challenges!",
-            "För att öppna länken: klicka på den understrukna raden i varje kolumn. Exempelvis \"🔗 Moving 1 | Moving - 3 min\".",
-            "Preliminära poäng utdelas under veckan. De kan gå upp beroende på hur många spelare som placerar sig under dig.",
-            "Poäng delas ut enligt pro league-systemet: sista plats får 1 poäng, näst sista 2 poäng, tredje sista 3 poäng osv.",
-            "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.",
-            "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.",
-            "Vid frågor, skriv i #ligan.",
-            "Mer info: Testa att skapa Excel-filen själv via appen: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
-            "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
-        ]
+        return league_core.default_information_rows(lang)
 
-    def _information_config_payload(self, rows: list[str]) -> dict:
+    def _information_config_payload(self, rows: list[str], existing_payload: Optional[dict] = None) -> dict:
         clean_rows = [str(line).strip() for line in rows if str(line).strip()]
         if not clean_rows:
             clean_rows = self._default_information_rows()
-        return {"version": 1, "information_rows": clean_rows}
+        lang = self._effective_language_key()
+        payload = existing_payload.copy() if isinstance(existing_payload, dict) else {}
+        by_lang = payload.get("information_rows_by_lang")
+        if not isinstance(by_lang, dict):
+            by_lang = {}
+        by_lang["sv"] = [str(x).strip() for x in by_lang.get("sv", league_core.default_information_rows("sv")) if str(x).strip()]
+        by_lang["en"] = [str(x).strip() for x in by_lang.get("en", league_core.default_information_rows("en")) if str(x).strip()]
+        by_lang[lang] = clean_rows
+        return {"version": 2, "information_rows_by_lang": by_lang}
 
     def _read_information_rows(self) -> list[str]:
         if not INFO_CONFIG_PATH.exists():
@@ -1376,8 +1628,13 @@ class LeagueDesktopApp:
             self.log(f"[WARN] Kunde inte läsa {INFO_CONFIG_PATH.name} ({ex}). Använder default.")
             return self._default_information_rows()
 
+        lang = self._effective_language_key()
         if isinstance(payload, dict):
-            rows = payload.get("information_rows")
+            by_lang = payload.get("information_rows_by_lang")
+            if isinstance(by_lang, dict):
+                rows = by_lang.get(lang) or by_lang.get("sv") or by_lang.get("en")
+            else:
+                rows = payload.get("information_rows")
         elif isinstance(payload, list):
             rows = payload
         else:
@@ -1421,7 +1678,13 @@ class LeagueDesktopApp:
             else:
                 legacy_path = None
 
-            payload = self._information_config_payload(rows)
+            existing_payload = None
+            if INFO_CONFIG_PATH.exists():
+                try:
+                    existing_payload = json.loads(INFO_CONFIG_PATH.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_payload = None
+            payload = self._information_config_payload(rows, existing_payload=existing_payload)
             INFO_CONFIG_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             return True, legacy_path
         except Exception as ex:
@@ -1438,6 +1701,7 @@ class LeagueDesktopApp:
             default_rows=default_rows,
             config_path=INFO_CONFIG_PATH,
             legacy_dir=INFO_CONFIG_LEGACY_DIR,
+            tr=self.tr_ui,
         )
         self.root.wait_window(dlg)
         if dlg.result_rows is None:
@@ -1445,13 +1709,13 @@ class LeagueDesktopApp:
 
         ok, legacy_path = self._save_information_rows_with_legacy_backup(dlg.result_rows)
         if not ok:
-            messagebox.showerror("Fel", "Kunde inte spara information-config. Se loggen för detaljer.", parent=self.root)
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("Kunde inte spara information-config. Se loggen för detaljer."), parent=self.root)
             return
 
         if legacy_path is not None:
             self.log(f"[OK] Sparade legacy-config: {legacy_path}")
         self.log(f"[OK] Uppdaterade information-config: {INFO_CONFIG_PATH}")
-        messagebox.showinfo("Klart", "Information-config sparad.", parent=self.root)
+        messagebox.showinfo(self.tr_ui("Klart"), self.tr_ui("Information-config sparad."), parent=self.root)
 
     def start_generation(self) -> None:
         if self.is_running:
@@ -1459,42 +1723,36 @@ class LeagueDesktopApp:
 
         weeks = self._collect_weeks_in_order()
         if not weeks:
-            messagebox.showerror("Fel", "Lägg till minst en veckofil.")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("Lägg till minst en veckofil."))
             return
         missing_files = [str(w.file_path) for w in weeks if not w.file_path.exists()]
         if missing_files:
-            msg = "Dessa veckofiler saknas:\n\n" + "\n".join(missing_files)
-            messagebox.showerror("Fel", msg)
+            msg = self.tr_uif("Dessa veckofiler saknas:\n\n{files}", files="\n".join(missing_files))
+            messagebox.showerror(self.tr_ui("Fel"), msg)
             self.log("[ERROR] Saknade filer:\n" + "\n".join(missing_files))
             return
 
         ncfa = self.ncfa_var.get().strip()
         if not ncfa:
-            messagebox.showerror("Fel", "_ncfa saknas.")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("_ncfa saknas."))
             return
 
         requested_out_base = self.out_base_var.get().strip() or "Liga"
         out_base = self._resolve_writable_out_base(requested_out_base)
         if out_base is None:
-            messagebox.showerror(
-                "Fel",
-                "Kunde inte hitta ett skrivbart filnamn för output. Stäng eventuell öppen Excel-fil och försök igen.",
-            )
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("Kunde inte hitta ett skrivbart filnamn för output. Stäng eventuell öppen Excel-fil och försök igen."))
             return
         if out_base != requested_out_base:
             self.out_base_var.set(out_base)
             self.log(f"[INFO] Outputfil var låst/upptagen. Använder fallback-namn: {out_base}")
             messagebox.showwarning(
-                "Outputfil låst",
-                (
-                    "En eller flera outputfiler är öppna/låsta och kunde inte skrivas över.\n"
-                    f"Sparar istället med suffix: {out_base}"
-                ),
+                self.tr_ui("Outputfil låst"),
+                self.tr_uif("En eller flera outputfiler är öppna/låsta och kunde inte skrivas över.\nSparar istället med suffix: {out_base}", out_base=out_base),
                 parent=self.root,
             )
 
         tz_name = self.tz_var.get().strip() or "Europe/Stockholm"
-        table_sort_key = TABLE_SORT_LABEL_TO_KEY.get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY)
+        table_sort_key = self._table_sort_label_to_key().get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY)
 
         os.environ["GEOGUESSR_NCFA"] = ncfa
         args: list[str] = []
@@ -1502,6 +1760,7 @@ class LeagueDesktopApp:
             args.extend(["--week", week.to_week_arg()])
         args.extend(["--out-base", out_base, "--tz", tz_name, "--tie", self.tie_var.get(), "--ncfa", ncfa])
         args.extend(["--sort-by", table_sort_key])
+        args.extend(["--lang", LANGUAGE_LABEL_TO_KEY.get(self.language_var.get().strip(), "auto")])
         args.extend(["--information-config", str(INFO_CONFIG_PATH)])
         if self.fetch_played_at_var.get():
             args.append("--fetch-played-at")
@@ -1518,7 +1777,7 @@ class LeagueDesktopApp:
         self.is_running = True
         self._saw_warning = False
         self.set_controls_state(False)
-        self.log("[START] Kör generator...")
+        self.log("[START] " + ("Run generator..." if self._effective_language_key() == "en" else "Kör generator..."))
         self.log("[ARGS] " + " ".join(args))
         self._start_running_feedback()
 
@@ -1569,19 +1828,19 @@ class LeagueDesktopApp:
         self.set_controls_state(True)
         self._stop_running_feedback(ok=(exit_code == 0))
         if exit_code == 0 and self._saw_warning:
-            self.progress_var.set("Klart med varningar.")
+            self.progress_var.set(self.tr_ui("Klart med varningar."))
         if exit_code == 0:
             self.log("[DONE] Klart.")
             if self._saw_warning:
                 messagebox.showwarning(
-                    "Klart med varningar",
-                    "Excel-filer skapades, men en eller flera veckor/kartor kunde inte hämtas fullt ut.\nSe loggen för detaljer.",
+                    self.tr_ui("Klart med varningar"),
+                    self.tr_ui("Excel-filer skapades, men en eller flera veckor/kartor kunde inte hämtas fullt ut.\nSe loggen för detaljer."),
                 )
             else:
-                messagebox.showinfo("Klart", "Excel-filer skapades.")
+                messagebox.showinfo(self.tr_ui("Klart"), self.tr_ui("Excel-filer skapades."))
         else:
             self.log(f"[ERROR] Körning misslyckades (exit code {exit_code}).")
-            messagebox.showerror("Fel", "Körning misslyckades. Se loggen.")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_ui("Körning misslyckades. Se loggen."))
 
     def open_project_folder(self) -> None:
         try:
@@ -1592,7 +1851,7 @@ class LeagueDesktopApp:
             else:
                 subprocess.Popen(["xdg-open", str(ROOT_DIR)])
         except Exception as ex:
-            messagebox.showerror("Fel", f"Kunde inte öppna mappen:\n{ex}")
+            messagebox.showerror(self.tr_ui("Fel"), self.tr_uif("Kunde inte öppna mappen:\n{ex}", ex=ex))
 
     def _save_state(self) -> None:
         state = {
@@ -1605,7 +1864,8 @@ class LeagueDesktopApp:
                 "out_base": self.out_base_var.get().strip(),
                 "tz": self.tz_var.get().strip(),
                 "tie": self.tie_var.get().strip(),
-                "sort_by": TABLE_SORT_LABEL_TO_KEY.get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY),
+                "language": LANGUAGE_LABEL_TO_KEY.get(self.language_var.get().strip(), "auto"),
+                "sort_by": self._table_sort_label_to_key().get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY),
                 "fetch_played_at": bool(self.fetch_played_at_var.get()),
                 "keep_missing_time": bool(self.keep_missing_time_var.get()),
                 "fetch_detailed_round_metrics": bool(self.fetch_detailed_round_metrics_var.get()),
@@ -1634,10 +1894,14 @@ class LeagueDesktopApp:
             self.tz_var.set(str(settings.get("tz", self.tz_var.get())) or "Europe/Stockholm")
             tie_value = str(settings.get("tie", self.tie_var.get()))
             self.tie_var.set(tie_value if tie_value in {"average", "dense", "min", "max"} else "average")
+            language_value = str(settings.get("language", "auto")).strip().lower()
+            if language_value not in LANGUAGE_KEY_TO_LABEL:
+                language_value = "auto"
+            self.language_var.set(LANGUAGE_KEY_TO_LABEL[language_value])
             sort_key = str(settings.get("sort_by", DEFAULT_TABLE_SORT_KEY)).strip().lower()
-            if sort_key not in TABLE_SORT_KEY_TO_LABEL:
+            if sort_key not in {key for _, key in TABLE_SORT_OPTIONS}:
                 sort_key = DEFAULT_TABLE_SORT_KEY
-            self.table_sort_var.set(TABLE_SORT_KEY_TO_LABEL[sort_key])
+            self.table_sort_var.set(self._table_sort_key_to_label()[sort_key])
             self.fetch_played_at_var.set(bool(settings.get("fetch_played_at", False)))
             self.keep_missing_time_var.set(bool(settings.get("keep_missing_time", False)))
             self.fetch_detailed_round_metrics_var.set(bool(settings.get("fetch_detailed_round_metrics", True)))
@@ -1671,8 +1935,8 @@ class LeagueDesktopApp:
     def on_close(self) -> None:
         if self.is_running:
             should_close = messagebox.askyesno(
-                "Körning pågår",
-                "En körning pågår fortfarande. Vill du verkligen avsluta appen?",
+                self.tr_ui("Körning pågår"),
+                self.tr_ui("En körning pågår fortfarande. Vill du verkligen avsluta appen?"),
                 parent=self.root,
             )
             if not should_close:

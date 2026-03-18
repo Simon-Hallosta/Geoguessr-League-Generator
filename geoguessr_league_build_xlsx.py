@@ -209,6 +209,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     # played-at filtering
     ap.add_argument("--fetch-played-at", action="store_true", help="Try to fetch played timestamp per entry via extra API calls.")
     ap.add_argument("--keep-missing-time", action="store_true", help="When filtering, keep entries where played_at cannot be determined (default: exclude).")
+    ap.add_argument(
+        "--skip-detailed-round-metrics",
+        action="store_true",
+        help="Skip extra per-player game-detail API calls for moving/5k step and distance metrics.",
+    )
+    ap.add_argument(
+        "--skip-advanced-analytics",
+        action="store_true",
+        help="Skip the expensive style sheet and advanced style/5k visualizations.",
+    )
 
     # debug
     ap.add_argument("--debug", action="store_true")
@@ -1367,6 +1377,7 @@ def build_week_entries(
     page_size: int,
     max_players: int,
     fetch_played_at: bool,
+    fetch_detailed_round_metrics: bool,
 ) -> Tuple[List[Entry], List[dict], bool, int]:
     """
     Returns (entries, map_meta_rows, has_any_played_at, failed_maps_count).
@@ -1476,7 +1487,7 @@ def build_week_entries(
 
             game_payload: Optional[dict] = None
             api_metrics: Dict[str, Any] = {}
-            if isinstance(game_token, str) and game_token:
+            if fetch_detailed_round_metrics and isinstance(game_token, str) and game_token:
                 if game_token in game_payload_cache:
                     game_payload = game_payload_cache[game_token]
                 else:
@@ -2903,6 +2914,7 @@ def write_visualizations_sheet(
     df_style: pd.DataFrame,
     df_similarity: pd.DataFrame,
     weeks: List[str],
+    include_advanced_analytics: bool = True,
     image_dir: Optional[Path] = None,
 ) -> None:
     ws = wb.create_sheet("Visualiseringar")
@@ -2924,11 +2936,16 @@ def write_visualizations_sheet(
         "V11: Featurevikter och PCA-komponenter",
         "V12: Placering vecka för vecka (kumulativ liga)",
         "V13: Ackumulerad ligapoäng vecka för vecka",
-        "V14: Spelstilslikhet heatmap",
-        "V15: 5k-effektivitet (frekvens vs fart)",
-        "V16: Steg för 5k Sverige",
-        "V17: Steg för 5k Världen",
     ]
+    if include_advanced_analytics:
+        viz_names.extend(
+            [
+                "V14: Spelstilslikhet heatmap",
+                "V15: 5k-effektivitet (frekvens vs fart)",
+                "V16: Steg för 5k Sverige",
+                "V17: Steg för 5k Världen",
+            ]
+        )
     ws["A3"] = "Diagramöversikt:"
     ws["A3"].font = Font(bold=True, color="1B314B")
     for i, txt in enumerate(viz_names, start=4):
@@ -3588,138 +3605,139 @@ def write_visualizations_sheet(
     ax.set_title("V13: Ackumulerad ligapoäng vecka för vecka")
     v13_path = _save_fig(fig, "V13_ackumulerad_ligapoang_vecka_for_vecka.png")
 
-    # V14: Spelstilslikhet heatmap
-    style_heatmap_players = (
-        df_style[df_style.get("is_qualified", pd.Series(dtype=bool)).fillna(False)]
-        .head(STYLE_SIMILARITY_MAX_PLAYERS)["player"]
-        .astype(str).tolist()
-        if not df_style.empty else []
-    )
-    style_heatmap = pd.DataFrame()
-    if style_heatmap_players and not df_similarity.empty and "player" in df_similarity.columns:
-        style_heatmap = (
-            df_similarity.set_index("player")
-            .reindex(index=style_heatmap_players, columns=style_heatmap_players)
+    advanced_image_specs: List[Tuple[Path, int, int]] = []
+    if include_advanced_analytics:
+        # V14: Spelstilslikhet heatmap
+        style_heatmap_players = (
+            df_style[df_style.get("is_qualified", pd.Series(dtype=bool)).fillna(False)]
+            .head(STYLE_SIMILARITY_MAX_PLAYERS)["player"]
+            .astype(str).tolist()
+            if not df_style.empty else []
         )
-
-    fig_w = max(BASE_FIG_W, min(16.0, 8.4 + 0.22 * max(1, len(style_heatmap_players))))
-    fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
-    if not style_heatmap.empty:
-        im = ax.imshow(style_heatmap.values, aspect="auto", cmap="YlGnBu", vmin=-1.0, vmax=1.0)
-        ax.set_xticks(list(range(len(style_heatmap.columns))))
-        ax.set_xticklabels([_safe_plot_label(x) for x in style_heatmap.columns], rotation=35, ha="right", fontsize=9)
-        ax.set_yticks(list(range(len(style_heatmap.index))))
-        ax.set_yticklabels([_safe_plot_label(x) for x in style_heatmap.index], fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Cosinuslikhet")
-    else:
-        _empty_plot(ax, "For fa kvalificerade spelare")
-    ax.set_title("V14: Spelstilslikhet heatmap")
-    v14_path = _save_fig(fig, "V14_spelstilslikhet_heatmap.png")
-
-    # V15: 5k-effektivitet
-    fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
-    if not df_style.empty:
-        style_plot = _style_player_subset(df_style).copy()
-        if style_plot.empty:
-            style_plot = df_style.copy()
-        if not style_plot.empty:
-            colors = style_plot["nmpz_strength"].fillna(50.0).tolist()
-            sizes = [35.0 + min(55.0, float(v) * 3.0) for v in style_plot["maps_counted"].fillna(0.0).tolist()]
-            sc = ax.scatter(
-                style_plot["fivek_rate_index"].fillna(0.0),
-                style_plot["fivek_speed_index"].fillna(0.0),
-                c=colors,
-                cmap="viridis",
-                s=sizes,
-                alpha=0.86,
+        style_heatmap = pd.DataFrame()
+        if style_heatmap_players and not df_similarity.empty and "player" in df_similarity.columns:
+            style_heatmap = (
+                df_similarity.set_index("player")
+                .reindex(index=style_heatmap_players, columns=style_heatmap_players)
             )
-            fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="NMPZ-styrka")
-            _annotate_all_points(
-                ax,
-                [float(x) for x in style_plot["fivek_rate_index"].tolist()],
-                [float(x) for x in style_plot["fivek_speed_index"].tolist()],
-                [str(x) for x in style_plot["player"].tolist()],
-                fontsize=9,
-            )
-            ax.set_xlabel("5k-frekvens")
-            ax.set_ylabel("5k-fart")
+
+        fig_w = max(BASE_FIG_W, min(16.0, 8.4 + 0.22 * max(1, len(style_heatmap_players))))
+        fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
+        if not style_heatmap.empty:
+            im = ax.imshow(style_heatmap.values, aspect="auto", cmap="YlGnBu", vmin=-1.0, vmax=1.0)
+            ax.set_xticks(list(range(len(style_heatmap.columns))))
+            ax.set_xticklabels([_safe_plot_label(x) for x in style_heatmap.columns], rotation=35, ha="right", fontsize=9)
+            ax.set_yticks(list(range(len(style_heatmap.index))))
+            ax.set_yticklabels([_safe_plot_label(x) for x in style_heatmap.index], fontsize=9)
+            fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Cosinuslikhet")
         else:
-            _empty_plot(ax, "For fa spelare")
-    else:
-        _empty_plot(ax, "Ingen spelstilsdata")
-    ax.set_title("V15: 5k-effektivitet (frekvens vs fart)")
-    v15_path = _save_fig(fig, "V15_5k_effektivitet.png")
+            _empty_plot(ax, "For fa kvalificerade spelare")
+        ax.set_title("V14: Spelstilslikhet heatmap")
+        v14_path = _save_fig(fig, "V14_spelstilslikhet_heatmap.png")
 
-    # V16/V17: Steg for 5k i moving, uppdelat pa Sverige / Varlden
-    dfo["fastest_5000_round_steps"] = pd.to_numeric(dfo.get("fastest_5000_round_steps"), errors="coerce")
-    dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
-    dfo["fastest_5000_round_distance_m"] = pd.to_numeric(dfo.get("fastest_5000_round_distance_m"), errors="coerce")
-    dfo["count_5000_rounds"] = pd.to_numeric(dfo.get("count_5000_rounds"), errors="coerce").fillna(0.0)
-
-    for tag, title, mask in [
-        ("V16", "V16: Steg för 5k Sverige", dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
-        ("V17", "V17: Steg för 5k Världen", (~dfo["is_sweden"]) & (dfo["mode_category"] == "moving")),
-    ]:
-        part = dfo[mask & dfo["fastest_5000_round_steps"].notna() & dfo["fastest_5000_round_time"].notna()].copy()
+        # V15: 5k-effektivitet
         fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
-        out_path: Optional[Path] = None
-        if not part.empty:
-            by_player = (
-                part.groupby("player", as_index=False)
-                .agg(
-                    median_steps=("fastest_5000_round_steps", "median"),
-                    median_time=("fastest_5000_round_time", "median"),
-                    median_distance=("fastest_5000_round_distance_m", "median"),
-                    moving_5ks=("count_5000_rounds", "sum"),
+        if not df_style.empty:
+            style_plot = _style_player_subset(df_style).copy()
+            if style_plot.empty:
+                style_plot = df_style.copy()
+            if not style_plot.empty:
+                colors = style_plot["nmpz_strength"].fillna(50.0).tolist()
+                sizes = [35.0 + min(55.0, float(v) * 3.0) for v in style_plot["maps_counted"].fillna(0.0).tolist()]
+                sc = ax.scatter(
+                    style_plot["fivek_rate_index"].fillna(0.0),
+                    style_plot["fivek_speed_index"].fillna(0.0),
+                    c=colors,
+                    cmap="viridis",
+                    s=sizes,
+                    alpha=0.86,
                 )
-                .sort_values(["moving_5ks", "median_steps", "median_time"], ascending=[False, True, True])
-            )
-            colors = by_player["moving_5ks"].fillna(0.0).tolist()
-            sizes = [40.0 + min(90.0, float(v or 0.0) / 8.0) for v in by_player["median_distance"].fillna(0.0).tolist()]
-            sc = ax.scatter(
-                by_player["median_steps"].tolist(),
-                by_player["median_time"].tolist(),
-                c=colors,
-                cmap="viridis",
-                s=sizes,
-                alpha=0.84,
-                edgecolors="white",
-                linewidths=0.6,
-            )
-            fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="Antal moving-5k")
-            _annotate_all_points(
-                ax,
-                [float(x) for x in by_player["median_steps"].tolist()],
-                [float(x) for x in by_player["median_time"].tolist()],
-                [f"{p} ({int(c)})" for p, c in zip(by_player["player"].tolist(), by_player["moving_5ks"].tolist())],
-                fontsize=9,
-            )
-            ax.set_xlabel("Mediansteg för 5k (moving)")
-            ax.set_ylabel("Mediantid för 5k (s)")
-            fig.subplots_adjust(bottom=0.18)
-            fig.text(
-                0.5,
-                0.035,
-                "Färg = antal moving-5k   |   Storlek = medianavstånd till 5k",
-                ha="center",
-                va="bottom",
-                fontsize=9,
-                bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
-            )
+                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="NMPZ-styrka")
+                _annotate_all_points(
+                    ax,
+                    [float(x) for x in style_plot["fivek_rate_index"].tolist()],
+                    [float(x) for x in style_plot["fivek_speed_index"].tolist()],
+                    [str(x) for x in style_plot["player"].tolist()],
+                    fontsize=9,
+                )
+                ax.set_xlabel("5k-frekvens")
+                ax.set_ylabel("5k-fart")
+            else:
+                _empty_plot(ax, "For fa spelare")
         else:
-            _empty_plot(ax, "Ingen moving-5k-data")
-        ax.set_title(title)
-        out_path = _save_fig(fig, f"{tag}_steg_for_5k_{'sverige' if tag == 'V16' else 'varlden'}.png")
-        if tag == "V16":
-            v16_path = out_path
-        else:
-            v17_path = out_path
+            _empty_plot(ax, "Ingen spelstilsdata")
+        ax.set_title("V15: 5k-effektivitet (frekvens vs fart)")
+        v15_path = _save_fig(fig, "V15_5k_effektivitet.png")
+
+        # V16/V17: Steg for 5k i moving, uppdelat pa Sverige / Varlden
+        dfo["fastest_5000_round_steps"] = pd.to_numeric(dfo.get("fastest_5000_round_steps"), errors="coerce")
+        dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
+        dfo["fastest_5000_round_distance_m"] = pd.to_numeric(dfo.get("fastest_5000_round_distance_m"), errors="coerce")
+        dfo["count_5000_rounds"] = pd.to_numeric(dfo.get("count_5000_rounds"), errors="coerce").fillna(0.0)
+
+        for tag, title, mask in [
+            ("V16", "V16: Steg för 5k Sverige", dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
+            ("V17", "V17: Steg för 5k Världen", (~dfo["is_sweden"]) & (dfo["mode_category"] == "moving")),
+        ]:
+            part = dfo[mask & dfo["fastest_5000_round_steps"].notna() & dfo["fastest_5000_round_time"].notna()].copy()
+            fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
+            out_path: Optional[Path] = None
+            if not part.empty:
+                by_player = (
+                    part.groupby("player", as_index=False)
+                    .agg(
+                        median_steps=("fastest_5000_round_steps", "median"),
+                        median_time=("fastest_5000_round_time", "median"),
+                        median_distance=("fastest_5000_round_distance_m", "median"),
+                        moving_5ks=("count_5000_rounds", "sum"),
+                    )
+                    .sort_values(["moving_5ks", "median_steps", "median_time"], ascending=[False, True, True])
+                )
+                colors = by_player["moving_5ks"].fillna(0.0).tolist()
+                sizes = [40.0 + min(90.0, float(v or 0.0) / 8.0) for v in by_player["median_distance"].fillna(0.0).tolist()]
+                sc = ax.scatter(
+                    by_player["median_steps"].tolist(),
+                    by_player["median_time"].tolist(),
+                    c=colors,
+                    cmap="viridis",
+                    s=sizes,
+                    alpha=0.84,
+                    edgecolors="white",
+                    linewidths=0.6,
+                )
+                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="Antal moving-5k")
+                _annotate_all_points(
+                    ax,
+                    [float(x) for x in by_player["median_steps"].tolist()],
+                    [float(x) for x in by_player["median_time"].tolist()],
+                    [f"{p} ({int(c)})" for p, c in zip(by_player["player"].tolist(), by_player["moving_5ks"].tolist())],
+                    fontsize=9,
+                )
+                ax.set_xlabel("Mediansteg för 5k (moving)")
+                ax.set_ylabel("Mediantid för 5k (s)")
+                fig.subplots_adjust(top=0.92, right=0.88)
+                ax.text(
+                    0.98,
+                    0.98,
+                    "Färg = antal moving-5k   |   Storlek = medianavstånd till 5k",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=9,
+                    bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
+                )
+            else:
+                _empty_plot(ax, "Ingen moving-5k-data")
+            ax.set_title(title)
+            out_path = _save_fig(fig, f"{tag}_steg_for_5k_{'sverige' if tag == 'V16' else 'varlden'}.png")
+            advanced_image_specs.append((out_path, 720, 540))
 
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
     first_row = max(26, len(viz_names) + 11)
     row_step = 31
-    for i in range(10):
+    total_images = 15 + len(advanced_image_specs)
+    for i in range(int(math.ceil(total_images / 2))):
         r = first_row + i * row_step
         anchors.append(f"A{r}")
         anchors.append(f"N{r}")
@@ -3740,11 +3758,8 @@ def write_visualizations_sheet(
         (v11_path, 720, 540),
         (v12_path, 720, 540),
         (v13_path, 720, 540),
-        (v14_path, 720, 540),
-        (v15_path, 720, 540),
-        (v16_path, 720, 540),
-        (v17_path, 720, 540),
     ]
+    image_specs.extend(advanced_image_specs)
 
     for idx, (img_path, w, h) in enumerate(image_specs):
         if idx >= len(anchors):
@@ -4221,6 +4236,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("[START] cwd   :", Path.cwd())
     print("[START] weeks :", [(w.label, str(w.urls_path), w.deadline) for w in weeks])
     print("[START] fetch_played_at:", bool(args.fetch_played_at))
+    print("[START] fetch_detailed_round_metrics:", not bool(args.skip_detailed_round_metrics))
+    print("[START] advanced_analytics:", not bool(args.skip_advanced_analytics))
     print("[START] tz:", args.tz)
     print("[START] sort_by:", normalize_sort_key(args.sort_by))
 
@@ -4258,6 +4275,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 page_size=args.page_size,
                 max_players=args.max_players,
                 fetch_played_at=bool(args.fetch_played_at and (w.deadline is not None)),
+                fetch_detailed_round_metrics=not bool(args.skip_detailed_round_metrics),
             )
             all_entries.extend(entries)
             all_map_meta.extend(week_map_meta)
@@ -4282,7 +4300,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Compute tables for ALL (unfiltered)
     df_overview_all, df_weekly_all, df_meta_all = compute_week_tables(all_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
     df_total_all, df_stats_all = compute_total_tables(df_overview_all)
-    df_style_all, df_similarity_all = compute_style_tables(df_overview_all)
+    if args.skip_advanced_analytics:
+        df_style_all = pd.DataFrame()
+        df_similarity_all = pd.DataFrame()
+    else:
+        df_style_all, df_similarity_all = compute_style_tables(df_overview_all)
 
     # Decide filtering
     can_filter = bool(deadlines_epoch) and bool(args.fetch_played_at) and any_played_at
@@ -4303,7 +4325,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         df_overview_f, df_weekly_f, df_meta_f = compute_week_tables(filtered_entries, tie_mode=args.tie, map_meta_rows=all_map_meta)
         df_total_f, df_stats_f = compute_total_tables(df_overview_f)
-        df_style_f, df_similarity_f = compute_style_tables(df_overview_f)
+        if args.skip_advanced_analytics:
+            df_style_f, df_similarity_f = pd.DataFrame(), pd.DataFrame()
+        else:
+            df_style_f, df_similarity_f = compute_style_tables(df_overview_f)
         print(f"[FILTER] enabled. Filtered rows: {len(filtered_entries)} (from {len(all_entries)})")
     else:
         if deadlines_epoch and args.fetch_played_at:
@@ -4330,7 +4355,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     write_total_sheet(wb_all, df_total_all, df_overview_all, week_labels, sort_by=args.sort_by)
     write_stats_sheet(wb_all, df_stats_all, sort_by=args.sort_by)
     write_underligor_sheet(wb_all, df_overview_all, sort_by=args.sort_by)
-    write_style_sheet(wb_all, df_style_all, df_similarity_all)
+    if not args.skip_advanced_analytics:
+        write_style_sheet(wb_all, df_style_all, df_similarity_all)
     write_visualizations_sheet(
         wb_all,
         df_overview_all,
@@ -4338,6 +4364,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         df_style_all,
         df_similarity_all,
         week_labels,
+        include_advanced_analytics=not bool(args.skip_advanced_analytics),
         image_dir=out_all.parent / "visualizations" / out_all.stem,
     )
     write_raw_sheet(wb_all, df_overview_all)
@@ -4359,7 +4386,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         write_total_sheet(wb_f, df_total_f, df_overview_f, week_labels, sort_by=args.sort_by)
         write_stats_sheet(wb_f, df_stats_f, sort_by=args.sort_by)
         write_underligor_sheet(wb_f, df_overview_f, sort_by=args.sort_by)
-        write_style_sheet(wb_f, df_style_f, df_similarity_f)
+        if not args.skip_advanced_analytics:
+            write_style_sheet(wb_f, df_style_f, df_similarity_f)
         write_visualizations_sheet(
             wb_f,
             df_overview_f,
@@ -4367,6 +4395,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             df_style_f,
             df_similarity_f,
             week_labels,
+            include_advanced_analytics=not bool(args.skip_advanced_analytics),
             image_dir=out_f.parent / "visualizations" / out_f.stem,
         )
         write_raw_sheet(wb_f, df_overview_f)

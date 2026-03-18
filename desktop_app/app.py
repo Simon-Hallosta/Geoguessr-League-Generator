@@ -637,6 +637,8 @@ class LeagueDesktopApp:
         self.table_sort_var = tk.StringVar(value=TABLE_SORT_KEY_TO_LABEL[DEFAULT_TABLE_SORT_KEY])
         self.fetch_played_at_var = tk.BooleanVar(value=False)
         self.keep_missing_time_var = tk.BooleanVar(value=False)
+        self.fetch_detailed_round_metrics_var = tk.BooleanVar(value=True)
+        self.advanced_analytics_var = tk.BooleanVar(value=True)
         self.debug_var = tk.BooleanVar(value=False)
         self.progress_var = tk.StringVar(value="Redo")
         self.progress_time_var = tk.StringVar(value="")
@@ -926,13 +928,27 @@ class LeagueDesktopApp:
             style="Card.TCheckbutton",
             variable=self.keep_missing_time_var,
         )
+        self.round_metrics_chk = ttk.Checkbutton(
+            options_frame,
+            text="Hämta detaljerad moving/5k-statistik (långsammare)",
+            style="Card.TCheckbutton",
+            variable=self.fetch_detailed_round_metrics_var,
+        )
+        self.advanced_analytics_chk = ttk.Checkbutton(
+            options_frame,
+            text="Skapa avancerad spelstil/5k-analys (långsammare)",
+            style="Card.TCheckbutton",
+            variable=self.advanced_analytics_var,
+        )
         self.debug_chk = ttk.Checkbutton(options_frame, text="Debug-logg", style="Card.TCheckbutton", variable=self.debug_var)
         self.fetch_chk.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 0))
         self.keep_missing_chk.grid(row=3, column=3, columnspan=2, sticky="w", pady=(8, 0))
         self.debug_chk.grid(row=3, column=5, sticky="w", pady=(8, 0))
+        self.round_metrics_chk.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.advanced_analytics_chk.grid(row=4, column=3, columnspan=3, sticky="w", pady=(6, 0))
 
         run_row = ttk.Frame(options_frame, style="Card.TFrame")
-        run_row.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(12, 0))
+        run_row.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(12, 0))
         self.run_btn = ttk.Button(run_row, text="Kör och skapa Excel", style="Accent.TButton", command=self.start_generation)
         self.info_cfg_btn = ttk.Button(run_row, text="Redigera Information-flik", style="Outline.TButton", command=self.open_information_config_dialog)
         self.open_folder_btn = ttk.Button(run_row, text="Öppna projektmapp", style="Soft.TButton", command=self.open_project_folder)
@@ -941,7 +957,7 @@ class LeagueDesktopApp:
         self.open_folder_btn.pack(side="left", padx=(8, 0))
 
         progress_row = ttk.Frame(options_frame, style="Card.TFrame")
-        progress_row.grid(row=5, column=0, columnspan=6, sticky="ew", pady=(10, 0))
+        progress_row.grid(row=6, column=0, columnspan=6, sticky="ew", pady=(10, 0))
         progress_row.columnconfigure(0, weight=1)
         self.progress_bar = ttk.Progressbar(progress_row, mode="indeterminate")
         self.progress_bar.grid(row=0, column=0, sticky="ew")
@@ -1491,6 +1507,10 @@ class LeagueDesktopApp:
             args.append("--fetch-played-at")
         if self.keep_missing_time_var.get():
             args.append("--keep-missing-time")
+        if not self.fetch_detailed_round_metrics_var.get():
+            args.append("--skip-detailed-round-metrics")
+        if not self.advanced_analytics_var.get():
+            args.append("--skip-advanced-analytics")
         if self.debug_var.get():
             args.append("--debug")
 
@@ -1588,6 +1608,8 @@ class LeagueDesktopApp:
                 "sort_by": TABLE_SORT_LABEL_TO_KEY.get(self.table_sort_var.get().strip(), DEFAULT_TABLE_SORT_KEY),
                 "fetch_played_at": bool(self.fetch_played_at_var.get()),
                 "keep_missing_time": bool(self.keep_missing_time_var.get()),
+                "fetch_detailed_round_metrics": bool(self.fetch_detailed_round_metrics_var.get()),
+                "advanced_analytics": bool(self.advanced_analytics_var.get()),
                 "debug": bool(self.debug_var.get()),
             },
         }
@@ -1618,6 +1640,8 @@ class LeagueDesktopApp:
             self.table_sort_var.set(TABLE_SORT_KEY_TO_LABEL[sort_key])
             self.fetch_played_at_var.set(bool(settings.get("fetch_played_at", False)))
             self.keep_missing_time_var.set(bool(settings.get("keep_missing_time", False)))
+            self.fetch_detailed_round_metrics_var.set(bool(settings.get("fetch_detailed_round_metrics", True)))
+            self.advanced_analytics_var.set(bool(settings.get("advanced_analytics", True)))
             self.debug_var.set(bool(settings.get("debug", False)))
 
         restored = 0

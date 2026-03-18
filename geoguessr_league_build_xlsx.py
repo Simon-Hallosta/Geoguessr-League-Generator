@@ -90,18 +90,18 @@ STYLE_MIN_WEEKS = 2
 STYLE_SIMILARITY_MAX_PLAYERS = 20
 STYLE_FEATURE_SPECS = [
     ("fivek_rate_raw", "5k-frekvens", 1.30, "Andel kartor med minst en 5k-runda."),
-    ("fivek_speed_raw", "5k-hastighet", 1.15, "Hur snabbt 5k tas nar den kommer."),
-    ("fivek_steps_moving_raw", "5k-steg i moving", 1.05, "Fa steg for att ta 5k i moving."),
-    ("best_round_efficiency_raw", "Basta-runda-effektivitet", 1.20, "Hog rundpoang i forhallande till rundtid."),
-    ("map_time_efficiency_raw", "Karttidseffektivitet", 1.00, "Laga karttider utan att bara spegla totalpoang."),
+    ("fivek_speed_raw", "5k-hastighet", 1.15, "Hur snabbt 5k tas när den kommer."),
+    ("fivek_steps_moving_raw", "5k-steg i moving", 1.05, "Få steg för att ta 5k i moving."),
+    ("best_round_efficiency_raw", "Bästa-runda-effektivitet", 1.20, "Hög rundpoäng i förhållande till rundtid."),
+    ("map_time_efficiency_raw", "Karttidseffektivitet", 1.00, "Låga karttider utan att bara spegla totalpoäng."),
     ("no_move_strength_raw", "No move-styrka", 1.25, "Relativ styrka i no move."),
     ("nmpz_strength_raw", "NMPZ-styrka", 1.25, "Relativ styrka i NMPZ."),
     ("moving_strength_raw", "Moving-styrka", 0.75, "Relativ styrka i moving."),
     ("specialization_raw", "Specialisering", 1.00, "Hur tydligt spelaren avviker mellan modes."),
-    ("consistency_raw", "Konsistens", 1.00, "Jamnhet inom spelarens prestationer."),
-    ("clutch_profile_raw", "Clutchprofil", 0.90, "Formaga att hitta toppresultat i enskilda rundor."),
-    ("precision_support_raw", "Precisionstod", 0.45, "Latt precisionstillskott via map-relativa resultat."),
-    ("total_pts_support_raw", "Totalpoang-stod", 0.20, "Svag stodsignal for total resultatniva."),
+    ("consistency_raw", "Konsistens", 1.00, "Jämnhet inom spelarens prestationer."),
+    ("clutch_profile_raw", "Clutchprofil", 0.90, "Förmåga att hitta toppresultat i enskilda rundor."),
+    ("precision_support_raw", "Precisionsstöd", 0.45, "Lätt precisionstillskott via map-relativa resultat."),
+    ("total_pts_support_raw", "Totalpoäng-stöd", 0.20, "Svag stödsignal för total resultatnivå."),
 ]
 STYLE_VECTOR_COLUMNS = [key for key, _, _, _ in STYLE_FEATURE_SPECS]
 
@@ -2944,6 +2944,7 @@ def write_visualizations_sheet(
                 "V15: 5k-effektivitet (frekvens vs fart)",
                 "V16: Steg för 5k Sverige",
                 "V17: Steg för 5k Världen",
+                "V18: Spelstilslikhet som nätverk",
             ]
         )
     ws["A3"] = "Diagramöversikt:"
@@ -3485,7 +3486,7 @@ def write_visualizations_sheet(
             bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
         )
     else:
-        _empty_plot(ax_sc, "For fa kvalificerade spelare")
+        _empty_plot(ax_sc, "För få kvalificerade spelare")
         _empty_plot(ax_l1)
         _empty_plot(ax_l2)
     fig.suptitle("V10: Stil-PCA + bidrag till PC1/PC2", fontsize=12, y=0.99)
@@ -3516,9 +3517,9 @@ def write_visualizations_sheet(
         f"PC2 ({style_pca_info.get('pc2_pct', 0.0):.1f}%): "
         + ", ".join(feature_merge.reindex(feature_merge["pc2_loading"].abs().sort_values(ascending=False).index)["feature_label"].head(4).tolist()),
         "",
-        "Likheten nedviktar totalpoang och uppviktar:",
+        "Likheten nedviktar totalpoäng och uppviktar:",
         "- 5k-frekvens och 5k-fart",
-        "- basta-runda-effektivitet",
+        "- bästa-runda-effektivitet",
         "- no move / NMPZ / moving-profiler",
         "- specialisering och konsistens",
     ]
@@ -3631,7 +3632,7 @@ def write_visualizations_sheet(
             ax.set_yticklabels([_safe_plot_label(x) for x in style_heatmap.index], fontsize=9)
             fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Cosinuslikhet")
         else:
-            _empty_plot(ax, "For fa kvalificerade spelare")
+            _empty_plot(ax, "För få kvalificerade spelare")
         ax.set_title("V14: Spelstilslikhet heatmap")
         v14_path = _save_fig(fig, "V14_spelstilslikhet_heatmap.png")
 
@@ -3663,13 +3664,13 @@ def write_visualizations_sheet(
                 ax.set_xlabel("5k-frekvens")
                 ax.set_ylabel("5k-fart")
             else:
-                _empty_plot(ax, "For fa spelare")
+                _empty_plot(ax, "För få spelare")
         else:
             _empty_plot(ax, "Ingen spelstilsdata")
         ax.set_title("V15: 5k-effektivitet (frekvens vs fart)")
         v15_path = _save_fig(fig, "V15_5k_effektivitet.png")
 
-        # V16/V17: Steg for 5k i moving, uppdelat pa Sverige / Varlden
+        # V16/V17: Steg för 5k i moving, uppdelat på Sverige / Världen
         dfo["fastest_5000_round_steps"] = pd.to_numeric(dfo.get("fastest_5000_round_steps"), errors="coerce")
         dfo["fastest_5000_round_time"] = pd.to_numeric(dfo.get("fastest_5000_round_time"), errors="coerce")
         dfo["fastest_5000_round_distance_m"] = pd.to_numeric(dfo.get("fastest_5000_round_distance_m"), errors="coerce")
@@ -3731,6 +3732,172 @@ def write_visualizations_sheet(
             ax.set_title(title)
             out_path = _save_fig(fig, f"{tag}_steg_for_5k_{'sverige' if tag == 'V16' else 'varlden'}.png")
             advanced_image_specs.append((out_path, 720, 540))
+
+        # V18: Spelstilslikhet som nätverk
+        fig, ax = plt.subplots(figsize=(13.2, 9.9))
+        network_edges: List[Tuple[str, str, float]] = []
+        if (
+            style_heatmap_players
+            and len(style_heatmap_players) >= 3
+            and not df_similarity.empty
+            and "player" in df_similarity.columns
+        ):
+            sim_lookup = (
+                df_similarity.set_index("player")
+                .reindex(index=style_heatmap_players, columns=style_heatmap_players)
+            )
+            pos_df = style_pca_points[style_pca_points["player"].astype(str).isin(style_heatmap_players)].copy()
+            if pos_df.empty:
+                _empty_plot(ax, "För få kvalificerade spelare")
+            else:
+                pos_df["player"] = pos_df["player"].astype(str)
+                pos_df = pos_df.drop_duplicates(subset=["player"]).set_index("player").reindex(style_heatmap_players)
+                if pos_df["pc1"].isna().all() or pos_df["pc2"].isna().all():
+                    angles = np.linspace(0, 2 * np.pi, len(style_heatmap_players), endpoint=False)
+                    pos_df["pc1"] = np.cos(angles)
+                    pos_df["pc2"] = np.sin(angles)
+                else:
+                    pos_df["pc1"] = pd.to_numeric(pos_df["pc1"], errors="coerce").fillna(0.0)
+                    pos_df["pc2"] = pd.to_numeric(pos_df["pc2"], errors="coerce").fillna(0.0)
+
+                edge_seen: set[Tuple[str, str]] = set()
+                for player in style_heatmap_players:
+                    if player not in sim_lookup.index:
+                        continue
+                    sims = pd.to_numeric(sim_lookup.loc[player], errors="coerce")
+                    sims = sims.drop(labels=[player], errors="ignore").dropna().sort_values(ascending=False)
+                    for other, sim in sims.head(4).items():
+                        sim_f = float(sim)
+                        if sim_f < 0.30:
+                            continue
+                        edge_key = tuple(sorted((str(player), str(other))))
+                        if edge_key in edge_seen:
+                            continue
+                        edge_seen.add(edge_key)
+                        network_edges.append((edge_key[0], edge_key[1], sim_f))
+
+                if not network_edges:
+                    _empty_plot(ax, "Likheterna är för svaga för nätverk")
+                else:
+                    archetype_lookup = (
+                        df_style[df_style["player"].astype(str).isin(style_heatmap_players)]
+                        .drop_duplicates(subset=["player"])
+                        .set_index("player")["style_archetype"]
+                        .astype(str)
+                        .to_dict()
+                    )
+                    color_map = {
+                        "5k-jagare": "#D94841",
+                        "Effektiv avslutare": "#D9891B",
+                        "Metodisk & stabil": "#2E8B57",
+                        "NMPZ-specialist": "#6C5CE7",
+                        "No move-specialist": "#279B70",
+                        "Moving-specialist": "#2A77D4",
+                        "Clutch & volatil": "#A64D1F",
+                        "Allround": "#607D8B",
+                    }
+                    style_subset = (
+                        df_style[df_style["player"].astype(str).isin(style_heatmap_players)]
+                        .drop_duplicates(subset=["player"])
+                        .set_index("player")
+                        .reindex(style_heatmap_players)
+                    )
+                    node_sizes = [
+                        180.0 + min(260.0, float(v) * 12.0)
+                        for v in pd.to_numeric(style_subset["maps_counted"], errors="coerce").fillna(0.0).tolist()
+                    ]
+                    node_colors = [
+                        color_map.get(archetype_lookup.get(player, "Allround"), "#607D8B")
+                        for player in style_heatmap_players
+                    ]
+
+                    for player_a, player_b, sim_f in sorted(network_edges, key=lambda item: item[2]):
+                        xa = float(pos_df.loc[player_a, "pc1"])
+                        ya = float(pos_df.loc[player_a, "pc2"])
+                        xb = float(pos_df.loc[player_b, "pc1"])
+                        yb = float(pos_df.loc[player_b, "pc2"])
+                        ax.plot(
+                            [xa, xb],
+                            [ya, yb],
+                            color="#7F8C8D",
+                            alpha=min(0.82, max(0.25, (sim_f - 0.35) / 0.65)),
+                            linewidth=1.0 + max(0.0, sim_f) * 3.4,
+                            zorder=1,
+                        )
+                        mid_x = (xa + xb) / 2.0
+                        mid_y = (ya + yb) / 2.0
+                        ax.text(
+                            mid_x,
+                            mid_y,
+                            f"{sim_f:.2f}",
+                            fontsize=8,
+                            ha="center",
+                            va="center",
+                            color="#34495E",
+                            bbox={"boxstyle": "round,pad=0.08", "fc": "white", "ec": "none", "alpha": 0.62},
+                            zorder=2,
+                        )
+
+                    ax.scatter(
+                        pos_df["pc1"].tolist(),
+                        pos_df["pc2"].tolist(),
+                        s=node_sizes,
+                        c=node_colors,
+                        alpha=0.95,
+                        edgecolors="white",
+                        linewidths=1.2,
+                        zorder=3,
+                    )
+                    _annotate_all_points(
+                        ax,
+                        [float(x) for x in pos_df["pc1"].tolist()],
+                        [float(x) for x in pos_df["pc2"].tolist()],
+                        [str(x) for x in pos_df.index.tolist()],
+                        fontsize=9,
+                    )
+                    ax.set_xlabel("PC1-position")
+                    ax.set_ylabel("PC2-position")
+                    ax.grid(alpha=0.15)
+                    legend_handles = [
+                        plt.Line2D(
+                            [0],
+                            [0],
+                            marker="o",
+                            color="w",
+                            label=label,
+                            markerfacecolor=color,
+                            markeredgecolor="white",
+                            markeredgewidth=0.8,
+                            markersize=8,
+                        )
+                        for label, color in color_map.items()
+                    ]
+                    ax.legend(
+                        handles=legend_handles,
+                        loc="lower right",
+                        title="Arketyper",
+                        frameon=True,
+                        facecolor="white",
+                        edgecolor="none",
+                        framealpha=0.82,
+                        fontsize=8,
+                        title_fontsize=9,
+                    )
+                    ax.text(
+                        0.98,
+                        0.98,
+                        "Kanter visar upp till fyra starkaste likheter per spelare (minst 0,30).\nNodfärg = arketyp, nodstorlek = antal kartor.",
+                        transform=ax.transAxes,
+                        fontsize=9,
+                        ha="right",
+                        va="top",
+                        bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
+                    )
+        else:
+            _empty_plot(ax, "För få kvalificerade spelare")
+        ax.set_title("V18: Spelstilslikhet som nätverk")
+        v18_path = _save_fig(fig, "V18_spelstilslikhet_natverk.png")
+        advanced_image_specs.append((v18_path, 720, 540))
 
     # Place images lower and larger so overview text remains visible and plots are easier to read.
     anchors: List[str] = []
@@ -3939,16 +4106,17 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
 
 def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.DataFrame) -> None:
     ws = wb.create_sheet("Spelstil")
-    merge_and_style(ws, 1, 1, 1, 20, "Spelstilsanalys", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 21, "Spelstilsanalys", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
     ws["A2"] = (
-        "Likhet bygger pa en viktad cosinuslikhet dar 5k-formaga, effektivitet, "
-        "mode-profiler och stabilitet vager tyngre an totalpoang. "
+        "Likhet bygger på en viktad cosinuslikhet där 5k-förmåga, effektivitet, "
+        "mode-profiler och stabilitet väger tyngre än totalpoäng. "
         f"Kvalificering: minst {STYLE_MIN_MAPS} kartor eller {STYLE_MIN_WEEKS} veckor."
     )
     ws["A2"].font = FONT_BODY_SUBTLE
+    ws.row_dimensions[2].height = 34
 
     if df_style.empty:
-        ws["A4"] = "Ingen data tillganglig for spelstilsanalys."
+        ws["A4"] = "Ingen data tillgänglig för spelstilsanalys."
         ws["A4"].font = Font(color="AA0000", bold=True)
         return
 
@@ -3957,8 +4125,8 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
 
     headers = [
         "#", "Spelare", "Arketyp", "Kartor", "Veckor", "Kval.",
-        "5k freq", "5k fart", "5k steg(M)", "Best-eff", "Tid-eff", "Konsistens",
-        "Moving", "No move", "NMPZ", "Spec.", "Lik 1", "Likhet", "Lik 2", "Likhet 2", "Prec.-stod",
+        "5k-frekv.", "5k-fart", "5k-steg(M)", "Bäst-eff.", "Tid-eff.", "Konsistens",
+        "Moving", "No move", "NMPZ", "Spec.", "Lik 1", "Likhet", "Lik 2", "Likhet 2", "Prec.-stöd",
     ]
     widths = {
         1: 4.5, 2: 22.0, 3: 18.0, 4: 8.0, 5: 8.0, 6: 8.0,
@@ -4050,7 +4218,9 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
         name_hint="SpelstilOversikt",
     )
 
-    feature_start_col = 22
+    spacer_col = 22
+    feature_start_col = 23
+    ws.column_dimensions[get_column_letter(spacer_col)].width = 3.0
     merge_and_style(ws, 1, feature_start_col, 1, feature_start_col + 4, "PCA / featureforklaring", fill=DARK, font=FONT_HDR_MED, align=CENTER)
     feature_headers = ["Feature", "Vikt", "PC1", "PC2", "Tolkning"]
     for offset, head in enumerate(feature_headers):
@@ -4061,7 +4231,7 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
         feature_start_col + 1: 8.0,
         feature_start_col + 2: 8.0,
         feature_start_col + 3: 8.0,
-        feature_start_col + 4: 42.0,
+        feature_start_col + 4: 46.0,
     })
 
     loadings_sorted = pca_loadings.copy()
@@ -4079,19 +4249,22 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
 
     pc1_top = ", ".join(loadings_sorted.sort_values("pc1_loading", ascending=False)["feature_label"].head(3).tolist()) if not loadings_sorted.empty else ""
     pc2_top = ", ".join(loadings_sorted.sort_values("pc2_loading", ascending=False)["feature_label"].head(3).tolist()) if not loadings_sorted.empty else ""
-    ws.cell(2, feature_start_col).value = f"PC1 ({pca_info.get('pc1_pct', 0.0):.1f}%): {pc1_top or 'for lite data'}"
-    ws.cell(2, feature_start_col).font = FONT_BODY_SUBTLE
-    ws.cell(2, feature_start_col + 3).value = f"PC2 ({pca_info.get('pc2_pct', 0.0):.1f}%): {pc2_top or 'for lite data'}"
-    ws.cell(2, feature_start_col + 3).font = FONT_BODY_SUBTLE
+    ws.merge_cells(start_row=2, start_column=feature_start_col, end_row=2, end_column=feature_start_col + 4)
+    ws.cell(2, feature_start_col).value = (
+        f"PC1 ({pca_info.get('pc1_pct', 0.0):.1f}%): {pc1_top or 'för lite data'}\n"
+        f"PC2 ({pca_info.get('pc2_pct', 0.0):.1f}%): {pc2_top or 'för lite data'}"
+    )
+    style_cell(ws, 2, feature_start_col, fill=WHITE, font=FONT_BODY_SUBTLE, align=LEFT)
+    ws.row_dimensions[2].height = max(ws.row_dimensions[2].height or 0, 38)
 
     matrix_start_row = max(header_row + len(sorted_style) + 4, 6 + len(loadings_sorted))
     ws.cell(matrix_start_row, 1).value = "Likhetsmatris"
     ws.cell(matrix_start_row, 1).font = Font(bold=True, color="1B314B")
-    ws.cell(matrix_start_row + 1, 1).value = "Visar kvalificerade spelare, begransat for lasbarhet."
+    ws.cell(matrix_start_row + 1, 1).value = "Visar kvalificerade spelare, begränsat för läsbarhet."
     ws.cell(matrix_start_row + 1, 1).font = FONT_BODY_SUBTLE
 
     if df_similarity.empty or "player" not in df_similarity.columns:
-        ws.cell(matrix_start_row + 3, 1).value = "For fa kvalificerade spelare for likhetsmatris."
+        ws.cell(matrix_start_row + 3, 1).value = "För få kvalificerade spelare för likhetsmatris."
         ws.cell(matrix_start_row + 3, 1).font = Font(color="AA0000", bold=True)
         return
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import locale
 import math
 import os
 import random
@@ -48,6 +49,221 @@ HTTP_BACKOFF_MAX_SECONDS = 15.0
 DEFAULT_TZ = "Europe/Stockholm"
 DEFAULT_INFORMATION_CONFIG_NAME = "information_config_v2.json"
 DEFAULT_SWEDEN_MAPS = (1, 4)
+ACTIVE_LANG = "sv"
+
+TRANSLATIONS_EN = {
+    "Sverige": "Sweden",
+    "Sverige Moving": "Sweden Moving",
+    "Sverige No Move": "Sweden No Move",
+    "Världen": "World",
+    "Spelare": "Player",
+    "Arketyp": "Archetype",
+    "Poäng": "Points",
+    "Kartor": "Maps",
+    "Veckor": "Weeks",
+    "Kval.": "Qual.",
+    "Likhet": "Similarity",
+    "Lik 1": "Match 1",
+    "Lik 2": "Match 2",
+    "Likhet 2": "Similarity 2",
+    "Bästa vecka": "Best week",
+    "Bästa vecka poäng": "Best week points",
+    "Bästa vecka pts": "Best week pts",
+    "Snitt poäng / karta": "Avg points / map",
+    "Snitt poäng / vecka": "Avg points / week",
+    "Snitt pts / karta": "Avg pts / map",
+    "Snitt pts/karta": "Avg pts/map",
+    "Snitt poäng/karta": "Avg points/map",
+    "Snitt pts": "Avg pts",
+    "Totalställning": "Total Standings",
+    "Total": "Total",
+    "Statistik": "Statistics",
+    "Stats": "Stats",
+    "Spelarnas spelstil": "Player Playstyles",
+    "Visualiseringar (Experiment)": "Visualizations (Experimental)",
+    "Diagramöversikt:": "Chart overview:",
+    "Underligor": "Subleagues",
+    "Snabbaste 5k - Sverige": "Fastest 5k - Sweden",
+    "Snabbaste 5k - Världen": "Fastest 5k - World",
+    "Information": "Information",
+    "Spelstilsanalys": "Player Playstyle Analysis",
+    "Likhetsmatris": "Similarity Matrix",
+    "Visar kvalificerade spelare, begränsat för läsbarhet.": "Shows qualified players, limited for readability.",
+    "För få kvalificerade spelare för likhetsmatris.": "Too few qualified players for a similarity matrix.",
+    "Ingen data tillgänglig för spelstilsanalys.": "No data available for style analysis.",
+    "Likhet bygger på en viktad cosinuslikhet där 5k-förmåga, effektivitet, mode-profiler och stabilitet väger tyngre än totalpoäng. ": "Similarity is based on a weighted cosine similarity where 5k ability, efficiency, mode profiles, and stability matter more than total points. ",
+    "PCA / featureforklaring": "PCA / feature explanation",
+    "Feature": "Feature",
+    "Vikt": "Weight",
+    "Tolkning": "Interpretation",
+    "Kvalificering": "Qualification",
+    "Ja": "Yes",
+    "Nej": "No",
+    "5k-frekv.": "5k rate",
+    "5k-fart": "5k speed",
+    "5k-steg(M)": "5k steps(M)",
+    "Bäst-eff.": "Best eff.",
+    "Tid-eff.": "Time eff.",
+    "Konsistens": "Consistency",
+    "Spec.": "Spec.",
+    "Prec.-stöd": "Prec. support",
+    "för lite data": "too little data",
+    "Ingen data": "No data",
+    "Spelarmedel": "Player average",
+    "Tid per karta (min)": "Time per map (min)",
+    "GeoGuessr-poäng": "GeoGuessr points",
+    "V1A: Tid vs poäng (Moving)": "V1A: Time vs points (Moving)",
+    "V1B: Tid vs poäng (No move)": "V1B: Time vs points (No move)",
+    "V1C: Tid vs poäng (NMPZ)": "V1C: Time vs points (NMPZ)",
+    "V2: Total råpoäng topp 20": "V2: Top 20 total raw points",
+    "V2: Total råpoäng (spelare med mer än en full vecka)": "V2: Total raw points (players with more than one full week)",
+    "Spelare": "Player",
+    "Snittpoäng": "Average points",
+    "V3: Snitt GeoGuessr-poäng per karttyp och spelare": "V3: Average GeoGuessr points by map type and player",
+    "Antal spelare": "Number of players",
+    "V4: Aktiva spelare per vecka": "V4: Active players per week",
+    "V5: Ligans snitt GeoGuessr-poäng per underliga-kategori": "V5: League average GeoGuessr points by subleague category",
+    "V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)": "V6: Top players by map type (average GeoGuessr points)",
+    "V7: Poängfördelning per karttyp": "V7: Point distribution by map type",
+    "Standardavvikelse i poäng": "Standard deviation in points",
+    "V8: Stabilitet vs nivå (std mot snittpoäng)": "V8: Stability vs level (std vs average points)",
+    "Över/under eget snitt": "Above/below own average",
+    "V9: Veckotrend-heatmap (över/under eget snitt)": "V9: Weekly trend heatmap (above/below own average)",
+    "Specialiseringsindex": "Specialization index",
+    "PC1: starkaste bidrag": "PC1: strongest contributors",
+    "PC2: starkaste bidrag": "PC2: strongest contributors",
+    "För få kvalificerade spelare": "Too few qualified players",
+    "Vikt i likhet/PCA": "Weight in similarity/PCA",
+    "Featurevikter": "Feature weights",
+    "Vad PCA:n faktiskt visar": "What the PCA actually shows",
+    "Placering": "Placement",
+    "V12: Placering vecka för vecka (kumulativ liga)": "V12: Placement week by week (cumulative league)",
+    "Ackumulerad ligapoäng": "Cumulative league points",
+    "V13: Ackumulerad ligapoäng vecka för vecka": "V13: Cumulative league points week by week",
+    "Cosinuslikhet": "Cosine similarity",
+    "V14: Spelstilslikhet heatmap": "V14: Playstyle similarity heatmap",
+    "NMPZ-styrka": "NMPZ strength",
+    "V15: 5k-effektivitet (frekvens vs fart)": "V15: 5k efficiency (rate vs speed)",
+    "Antal moving-5k": "Number of moving 5ks",
+    "Mediansteg för 5k (moving)": "Median steps to 5k (moving)",
+    "Mediantid för 5k (s)": "Median time to 5k (s)",
+    "Färg = antal moving-5k   |   Storlek = medianavstånd till 5k": "Color = number of moving 5ks   |   Size = median distance to 5k",
+    "PC1-position": "PC1 position",
+    "PC2-position": "PC2 position",
+    "V18: Spelstilslikhet som nätverk": "V18: Playstyle similarity as a network",
+    "V10: Stil-PCA + bidrag till PC1/PC2": "V10: Playstyle PCA + contributions to PC1/PC2",
+    "V11: Featurevikter och PCA-komponenter": "V11: Feature weights and PCA components",
+    "V16: Steg för 5k Sverige": "V16: Steps to 5k Sweden",
+    "V17: Steg för 5k Världen": "V17: Steps to 5k World",
+    "V1: Tid vs poäng ({mode})": "V1: Time vs points ({mode})",
+    "PC1 ({pct:.1f}% forklarad varians)": "PC1 ({pct:.1f}% explained variance)",
+    "PC2 ({pct:.1f}% forklarad varians)": "PC2 ({pct:.1f}% explained variance)",
+    "5k-frekvens": "5k rate",
+    "5k-hastighet": "5k speed",
+    "5k-steg i moving": "5k steps in moving",
+    "Bästa-runda-effektivitet": "Best-round efficiency",
+    "Karttidseffektivitet": "Map time efficiency",
+    "No move-styrka": "No move strength",
+    "NMPZ-styrka": "NMPZ strength",
+    "Moving-styrka": "Moving strength",
+    "Specialisering": "Specialization",
+    "Clutchprofil": "Clutch profile",
+    "Precisionsstöd": "Precision support",
+    "Totalpoäng-stöd": "Total points support",
+    "Andel kartor med minst en 5k-runda.": "Share of maps with at least one 5k round.",
+    "Hur snabbt 5k tas när den kommer.": "How quickly a 5k is achieved when it happens.",
+    "Få steg för att ta 5k i moving.": "Few steps needed to get a 5k in moving.",
+    "Hög rundpoäng i förhållande till rundtid.": "High round score relative to round time.",
+    "Låga karttider utan att bara spegla totalpoäng.": "Low map times without merely reflecting total points.",
+    "Relativ styrka i no move.": "Relative strength in no move.",
+    "Relativ styrka i NMPZ.": "Relative strength in NMPZ.",
+    "Relativ styrka i moving.": "Relative strength in moving.",
+    "Hur tydligt spelaren avviker mellan modes.": "How clearly the player differs between modes.",
+    "Jämnhet inom spelarens prestationer.": "Consistency within the player's performances.",
+    "Förmåga att hitta toppresultat i enskilda rundor.": "Ability to find top results in individual rounds.",
+    "Lätt precisionstillskott via map-relativa resultat.": "Light precision support via map-relative results.",
+    "Svag stödsignal för total resultatnivå.": "Weak support signal for overall result level.",
+    "5k-jagare": "5k hunter",
+    "Effektiv avslutare": "Efficient finisher",
+    "Metodisk & stabil": "Methodical & stable",
+    "NMPZ-specialist": "NMPZ specialist",
+    "No move-specialist": "No move specialist",
+    "Moving-specialist": "Moving specialist",
+    "Clutch & volatil": "Clutch & volatile",
+    "Allround": "All-rounder",
+    "INFO_ROW_APP": "More info: Try creating the Excel file yourself with the app: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
+    "INFO_ROW_GITHUB": "More info: GitHub, README, and latest updates: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
+    "Topp-spelare per karttyp (snitt GeoGuessr-poäng)": "Top players by map type (average GeoGuessr points)",
+    "Visualiseringar": "Visualizations",
+    "Ingen data tillgänglig för visualiseringar.": "No data available for visualizations.",
+    "Kunde inte skapa visualiseringsbilder (matplotlib saknas): ": "Could not create visualization images (matplotlib missing): ",
+    "V18: Spelstilslikhet som nätverk": "V18: Style similarity as a network",
+    "Arketyper": "Archetypes",
+    "Kanter visar upp till fyra starkaste likheter per spelare (minst 0,30).\nNodfärg = arketyp, nodstorlek = antal kartor.": "Edges show up to the four strongest similarities per player (at least 0.30).\nNode color = archetype, node size = number of maps.",
+    "Likheterna är för svaga för nätverk": "The similarities are too weak for a network",
+    "För få kvalificerade spelare": "Too few qualified players",
+    "För få spelare": "Too few players",
+    "Ingen spelstilsdata": "No style data",
+    "Ingen moving-5k-data": "No moving-5k data",
+    "Tid": "Time",
+    "Runda pts": "Round pts",
+    "Högsta runda": "Highest round",
+    "Output file locked": "Output file locked",
+    "Ingen anmälan krävs - det är bara att spela veckans challenges!": "No signup is required - just play this week's challenges!",
+    "För att öppna länken: klicka på den understrukna raden i varje kolumn. Exempelvis \"🔗 Moving 1 | Moving - 3 min\".": "To open a link, click the underlined row in each column. For example: \"🔗 Moving 1 | Moving - 3 min\".",
+    "Preliminära poäng utdelas under veckan. De kan gå upp beroende på hur många spelare som placerar sig under dig.": "Preliminary points are awarded during the week. They may increase depending on how many players place below you.",
+    "Poäng delas ut enligt pro league-systemet: sista plats får 1 poäng, näst sista 2 poäng, tredje sista 3 poäng osv.": "Points are awarded using the pro league system: last place gets 1 point, second-last gets 2, third-last gets 3, and so on.",
+    "Tiebreaker vid samma poäng är tid. Om två spelare delar plats får båda poäng för den delade placeringen.": "The tiebreaker for equal points is time. If two players share a position, both receive points for the shared placement.",
+    "Varje vecka avslutas onsdag kl 20.00. Om poängen inte är ihopräknade då kan du spela tills poängen är ihopräknade.": "Each week closes on Wednesday at 20:00. If the points have not been counted by then, you may keep playing until they are counted.",
+    "Vid frågor, skriv i #ligan.": "If you have questions, write in #ligan.",
+    "Mer info: Testa att skapa Excel-filen själv via appen: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link": "More info: Try creating the Excel file yourself with the app: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
+    "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator": "More info: GitHub, README, and latest updates: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
+    "PC1_EXPLAINER": "PC1 ({pct:.1f}%): {top}",
+    "PC2_EXPLAINER": "PC2 ({pct:.1f}%): {top}",
+    "STYLE_QUALIFICATION_EXPLAINER": "Qualification: at least {maps} maps or {weeks} weeks.",
+}
+
+
+def _detect_system_language() -> str:
+    candidates = [
+        os.environ.get("LANG"),
+        os.environ.get("LC_ALL"),
+        os.environ.get("LC_MESSAGES"),
+    ]
+    try:
+        candidates.extend([locale.getlocale()[0], locale.getdefaultlocale()[0]])  # type: ignore[index]
+    except Exception:
+        pass
+    for candidate in candidates:
+        raw = str(candidate or "").strip().lower()
+        if not raw:
+            continue
+        if raw.startswith("sv"):
+            return "sv"
+        if raw.startswith("en"):
+            return "en"
+    return "en"
+
+
+def set_active_language(lang: str) -> str:
+    global ACTIVE_LANG
+    normalized = str(lang or "").strip().lower()
+    if normalized == "auto" or not normalized:
+        normalized = _detect_system_language()
+    if normalized not in {"sv", "en"}:
+        normalized = "sv"
+    ACTIVE_LANG = normalized
+    return ACTIVE_LANG
+
+
+def tr(text: str) -> str:
+    if ACTIVE_LANG == "en":
+        return TRANSLATIONS_EN.get(text, text)
+    return text
+
+
+def trf(key: str, **kwargs) -> str:
+    return tr(key).format(**kwargs)
 
 # Fixed weekly map slots (index -> category)
 MAP_SLOT_KEY_BY_INDEX = {
@@ -79,7 +295,7 @@ SUBLEAGUE_SLOT_KEYS = {
     "Sverige No Move": ["no_move_2"],
 }
 
-DEFAULT_INFORMATION_ROWS = [
+DEFAULT_INFORMATION_ROWS_SV = [
     "Ingen anmälan krävs - det är bara att spela veckans challenges!",
     "För att öppna länken: klicka på den understrukna raden i varje kolumn. Exempelvis \"🔗 Moving 1 | Moving - 3 min\".",
     "Preliminära poäng utdelas under veckan. De kan gå upp beroende på hur många spelare som placerar sig under dig.",
@@ -89,6 +305,17 @@ DEFAULT_INFORMATION_ROWS = [
     "Vid frågor, skriv i #ligan.",
     "Mer info: Testa att skapa Excel-filen själv via appen: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
     "Mer info: GitHub, README och senaste uppdateringarna: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
+]
+DEFAULT_INFORMATION_ROWS_EN = [
+    "No signup is required - just play this week's challenges!",
+    "To open a link, click the underlined row in each column. For example: \"🔗 Moving 1 | Moving - 3 min\".",
+    "Preliminary points are awarded during the week. They may increase depending on how many players place below you.",
+    "Points are awarded using the pro league system: last place gets 1 point, second-last gets 2, third-last gets 3, and so on.",
+    "The tiebreaker for equal points is time. If two players share a position, both receive points for the shared placement.",
+    "Each week closes on Wednesday at 20:00. If the points have not been counted by then, you may keep playing until they are counted.",
+    "If you have questions, write in #ligan.",
+    "More info: Try creating the Excel file yourself with the app: https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link",
+    "More info: GitHub, README, and latest updates: https://github.com/Simon-Hallosta/Geoguessr-League-Generator",
 ]
 
 STYLE_MIN_MAPS = 6
@@ -194,6 +421,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help=f"Path to JSON config for Information sheet. Default behavior uses ./{DEFAULT_INFORMATION_CONFIG_NAME} when present.",
     )
     ap.add_argument("--tz", default=DEFAULT_TZ, help="Timezone for deadlines, e.g. Europe/Stockholm")
+    ap.add_argument("--lang", default="auto", choices=["auto", "sv", "en"], help="Workbook/log language: auto, sv, en.")
     ap.add_argument("--ncfa", default="", help="Override GEOGUESSR_NCFA env var")
     ap.add_argument("--timeout", type=float, default=30.0)
 
@@ -467,8 +695,10 @@ def build_slot_key_from_mode(mode_category: str, occurrence_index: int) -> str:
     return f"{cat or 'unknown'}_{occurrence_index}"
 
 
-def default_information_rows() -> List[str]:
-    return list(DEFAULT_INFORMATION_ROWS)
+def default_information_rows(lang: Optional[str] = None) -> List[str]:
+    active = ACTIVE_LANG if lang is None else ("en" if str(lang).strip().lower() == "en" else "sv")
+    rows = DEFAULT_INFORMATION_ROWS_EN if active == "en" else DEFAULT_INFORMATION_ROWS_SV
+    return [str(row) for row in rows]
 
 
 def _normalize_information_rows(rows: Any) -> List[str]:
@@ -494,6 +724,10 @@ def load_information_rows(config_path: Optional[Path], debug: bool = False) -> L
         return default_information_rows()
 
     if isinstance(payload, dict):
+        by_lang = payload.get("information_rows_by_lang")
+        if isinstance(by_lang, dict):
+            rows = by_lang.get(ACTIVE_LANG) or by_lang.get("sv") or by_lang.get("en")
+            return _normalize_information_rows(rows)
         return _normalize_information_rows(payload.get("information_rows"))
     if isinstance(payload, list):
         return _normalize_information_rows(payload)
@@ -2258,7 +2492,7 @@ def _similarity_fill(value: Any) -> PatternFill:
 def style_feature_meta_df() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"feature_key": key, "feature_label": label, "weight": float(weight), "description": desc}
+            {"feature_key": key, "feature_label": tr(label), "weight": float(weight), "description": tr(desc)}
             for key, label, weight, desc in STYLE_FEATURE_SPECS
         ]
     )
@@ -2329,29 +2563,29 @@ def _dominant_style_label(row: pd.Series) -> str:
     }
 
     if values["fivek_rate"] >= 72.0 and values["fivek_speed"] >= 62.0 and values["fivek_steps"] >= 55.0:
-        return "5k-jagare"
+        return tr("5k-jagare")
     if values["time_eff"] >= 70.0 and values["best_eff"] >= 62.0:
-        return "Effektiv avslutare"
+        return tr("Effektiv avslutare")
     if values["consistency"] >= 70.0 and values["time_eff"] < 62.0:
-        return "Metodisk & stabil"
+        return tr("Metodisk & stabil")
     if values["specialization"] >= 72.0:
         if values["nmpz"] >= max(values["moving"], values["no_move"]):
-            return "NMPZ-specialist"
+            return tr("NMPZ-specialist")
         if values["no_move"] >= max(values["moving"], values["nmpz"]):
-            return "No move-specialist"
-        return "Moving-specialist"
+            return tr("No move-specialist")
+        return tr("Moving-specialist")
     if values["clutch"] >= 68.0 and values["consistency"] < 52.0:
-        return "Clutch & volatil"
+        return tr("Clutch & volatil")
 
     mode_scores = {
-        "Moving-specialist": values["moving"],
-        "No move-specialist": values["no_move"],
-        "NMPZ-specialist": values["nmpz"],
+        tr("Moving-specialist"): values["moving"],
+        tr("No move-specialist"): values["no_move"],
+        tr("NMPZ-specialist"): values["nmpz"],
     }
     top_mode = max(mode_scores, key=mode_scores.get)
     if mode_scores[top_mode] >= 68.0:
         return top_mode
-    return "Allround"
+    return tr("Allround")
 
 
 def compute_style_tables(df_overview: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -2723,8 +2957,8 @@ def write_week_sheet(
         merge_and_style(ws, r2, c, r2, c, str(maps[i].get("map_name") or f"Map {i+1}"), fill=DARK, font=FONT_HDR_MED, align=CENTER)
 
     ws.cell(r3, col_rank).value = "#"
-    ws.cell(r3, col_player).value = "Spelare"
-    ws.cell(r3, col_total).value = "Poäng"
+    ws.cell(r3, col_player).value = tr("Spelare")
+    ws.cell(r3, col_total).value = tr("Poäng")
     for c in (col_rank, col_player, col_total):
         style_cell(ws, r3, c, fill=MID, font=FONT_HDR, align=CENTER)
 
@@ -2817,12 +3051,12 @@ def write_total_sheet(
     weeks: List[str],
     sort_by: str = "default",
 ) -> None:
-    ws = wb.create_sheet("Total")
+    ws = wb.create_sheet(tr("Total"))
 
     # Header
-    merge_and_style(ws, 1, 1, 1, 7 + len(weeks), "Totalställning", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 7 + len(weeks), tr("Totalställning"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
-    headers = ["#", "Spelare", "Poäng", "Total pts", "Snitt pts/karta", "Kartor", "Veckor"] + [f"{w}" for w in weeks]
+    headers = ["#", tr("Spelare"), tr("Poäng"), "Total pts", tr("Snitt pts/karta"), tr("Kartor"), tr("Veckor")] + [f"{w}" for w in weeks]
     for c, h in enumerate(headers, start=1):
         ws.cell(2, c).value = h
         style_cell(ws, 2, c, fill=MID, font=FONT_HDR, align=CENTER)
@@ -2883,21 +3117,21 @@ def write_total_sheet(
 
 
 def write_stats_sheet(wb: Workbook, df_stats: pd.DataFrame, sort_by: str = "default") -> None:
-    ws = wb.create_sheet("Stats")
+    ws = wb.create_sheet(tr("Stats"))
 
-    merge_and_style(ws, 1, 1, 1, 24, "Statistik", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, 24, tr("Statistik"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     cols = [
-        "#", "Spelare",
-        "Poäng", "Total pts",
-        "Kartor", "Veckor",
+        "#", tr("Spelare"),
+        tr("Poäng"), "Total pts",
+        tr("Kartor"), tr("Veckor"),
         "Moving 1", "Moving 2",
         "No move 1", "No move 2",
         "NMPZ 1", "NMPZ 2",
-        "Moving", "No move", "NMPZ", "Sverige",
-        "Sverige Moving", "Sverige No Move",
-        "Snitt poäng / karta", "Snitt poäng / vecka", "Snitt pts / karta",
-        "Bästa vecka", "Bästa vecka poäng", "Bästa vecka pts",
+        "Moving", "No move", "NMPZ", tr("Sverige"),
+        tr("Sverige Moving"), tr("Sverige No Move"),
+        tr("Snitt poäng / karta"), tr("Snitt poäng / vecka"), tr("Snitt pts / karta"),
+        tr("Bästa vecka"), tr("Bästa vecka poäng"), tr("Bästa vecka pts"),
     ]
 
     for c, h in enumerate(cols, start=1):
@@ -2978,37 +3212,37 @@ def write_visualizations_sheet(
     include_advanced_analytics: bool = True,
     image_dir: Optional[Path] = None,
 ) -> None:
-    ws = wb.create_sheet("Visualiseringar")
-    merge_and_style(ws, 1, 1, 1, 24, "Visualiseringar (Experiment)", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    ws = wb.create_sheet(tr("Visualiseringar"))
+    merge_and_style(ws, 1, 1, 1, 24, tr("Visualiseringar (Experiment)"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     viz_names = [
-        "V1A: Tid vs poäng (Moving)",
-        "V1B: Tid vs poäng (No move)",
-        "V1C: Tid vs poäng (NMPZ)",
-        "V2: Total råpoäng topp 20",
-        "V3: Snitt GeoGuessr-poäng per karttyp och spelare",
-        "V4: Aktiva spelare per vecka",
-        "V5: Ligans snitt GeoGuessr-poäng per underliga-kategori",
-        "V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)",
-        "V7: Poängfördelning per karttyp",
-        "V8: Stabilitet vs nivå (std mot snittpoäng)",
-        "V9: Veckotrend-heatmap (över/under eget snitt)",
-        "V10: Stil-PCA + bidrag till PC1/PC2",
-        "V11: Featurevikter och PCA-komponenter",
-        "V12: Placering vecka för vecka (kumulativ liga)",
-        "V13: Ackumulerad ligapoäng vecka för vecka",
+        tr("V1A: Tid vs poäng (Moving)"),
+        tr("V1B: Tid vs poäng (No move)"),
+        tr("V1C: Tid vs poäng (NMPZ)"),
+        tr("V2: Total råpoäng topp 20"),
+        tr("V3: Snitt GeoGuessr-poäng per karttyp och spelare"),
+        tr("V4: Aktiva spelare per vecka"),
+        tr("V5: Ligans snitt GeoGuessr-poäng per underliga-kategori"),
+        tr("V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)"),
+        tr("V7: Poängfördelning per karttyp"),
+        tr("V8: Stabilitet vs nivå (std mot snittpoäng)"),
+        tr("V9: Veckotrend-heatmap (över/under eget snitt)"),
+        tr("V10: Stil-PCA + bidrag till PC1/PC2"),
+        tr("V11: Featurevikter och PCA-komponenter"),
+        tr("V12: Placering vecka för vecka (kumulativ liga)"),
+        tr("V13: Ackumulerad ligapoäng vecka för vecka"),
     ]
     if include_advanced_analytics:
         viz_names.extend(
             [
-                "V14: Spelstilslikhet heatmap",
-                "V15: 5k-effektivitet (frekvens vs fart)",
-                "V16: Steg för 5k Sverige",
-                "V17: Steg för 5k Världen",
-                "V18: Spelstilslikhet som nätverk",
+                tr("V14: Spelstilslikhet heatmap"),
+                tr("V15: 5k-effektivitet (frekvens vs fart)"),
+                tr("V16: Steg för 5k Sverige"),
+                tr("V17: Steg för 5k Världen"),
+                tr("V18: Spelstilslikhet som nätverk"),
             ]
         )
-    ws["A3"] = "Diagramöversikt:"
+    ws["A3"] = tr("Diagramöversikt:")
     ws["A3"].font = Font(bold=True, color="1B314B")
     for i, txt in enumerate(viz_names, start=4):
         ws[f"A{i}"] = txt
@@ -3020,7 +3254,7 @@ def write_visualizations_sheet(
     set_col_widths(ws, widths)
 
     if df_overview.empty or df_total.empty:
-        ws["A16"] = "Ingen data tillgänglig för visualiseringar."
+        ws["A16"] = tr("Ingen data tillgänglig för visualiseringar.")
         ws["A16"].font = Font(color="AA0000", bold=True)
         return
 
@@ -3039,11 +3273,11 @@ def write_visualizations_sheet(
         import matplotlib.pyplot as plt
         import numpy as np
     except Exception as ex:
-        ws["A16"] = f"Kunde inte skapa visualiseringsbilder (matplotlib saknas): {ex}"
+        ws["A16"] = tr("Kunde inte skapa visualiseringsbilder (matplotlib saknas): ") + str(ex)
         ws["A16"].font = Font(color="AA0000", bold=True)
         return
 
-    def _empty_plot(ax, text: str = "Ingen data") -> None:
+    def _empty_plot(ax, text: str = tr("Ingen data")) -> None:
         ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, fontsize=12)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -3227,7 +3461,7 @@ def write_visualizations_sheet(
         part = dfo[dfo["mode3"] == mode_name].copy()
         fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
         if not part.empty:
-            ax.scatter(part["total_time"] / 60.0, part["total_pts"], s=14, alpha=0.14, color="#808B96", label="Alla rundor")
+            ax.scatter(part["total_time"] / 60.0, part["total_pts"], s=14, alpha=0.14, color="#808B96", label="All rounds" if ACTIVE_LANG == "en" else "Alla rundor")
             by_player = (
                 part.groupby("player", as_index=False)
                 .agg(
@@ -3246,7 +3480,7 @@ def write_visualizations_sheet(
                 color=color,
                 edgecolors="white",
                 linewidths=0.5,
-                label="Spelarmedel",
+                label=tr("Spelarmedel"),
             )
             _annotate_all_points(
                 ax,
@@ -3255,12 +3489,12 @@ def write_visualizations_sheet(
                 [str(x) for x in by_player["player"].tolist()],
                 fontsize=9,
             )
-            ax.set_xlabel("Tid per karta (min)")
-            ax.set_ylabel("GeoGuessr-poäng")
+            ax.set_xlabel(tr("Tid per karta (min)"))
+            ax.set_ylabel(tr("GeoGuessr-poäng"))
             ax.legend(loc="best", fontsize=10, frameon=True)
         else:
             _empty_plot(ax)
-        ax.set_title(f"{tag}: Tid vs poäng ({mode_name})")
+        ax.set_title(trf("V1: Tid vs poäng ({mode})", mode=mode_name))
         v1_paths.append(_save_fig(fig, f"{tag}_tid_vs_poang_{mode_name.lower().replace(' ', '_')}.png"))
 
     # V2: Total rapoang for spelare med "mer an en full vecka"
@@ -3283,11 +3517,11 @@ def write_visualizations_sheet(
         ax.barh(ys, vals_rev, color="#279B70")
         ax.set_yticks(ys)
         ax.set_yticklabels(labels_rev, fontsize=10)
-        ax.set_ylabel("Spelare")
-        ax.set_xlabel("GeoGuessr-poäng")
+        ax.set_ylabel(tr("Spelare"))
+        ax.set_xlabel(tr("GeoGuessr-poäng"))
     else:
         _empty_plot(ax)
-    ax.set_title("V2: Total råpoäng (spelare med mer än en full vecka)")
+    ax.set_title(tr("V2: Total råpoäng (spelare med mer än en full vecka)"))
     v2_path = _save_fig(fig, "V2_total_rapoang_expanded.png")
 
     # V3: Snitt GeoGuessr-poang per karttyp och spelare (heatmap)
@@ -3326,10 +3560,10 @@ def write_visualizations_sheet(
         ax.set_xticklabels(["Moving", "No move", "NMPZ"])
         ax.set_yticks(list(range(len(v3_pivot.index))))
         ax.set_yticklabels([_safe_plot_label(p) for p in v3_pivot.index], fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Snittpoäng")
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label=tr("Snittpoäng"))
     else:
         _empty_plot(ax)
-    ax.set_title("V3: Snitt GeoGuessr-poäng per karttyp och spelare")
+    ax.set_title(tr("V3: Snitt GeoGuessr-poäng per karttyp och spelare"))
     v3_path = _save_fig(fig, "V3_snitt_ggpoang_karttyp_spelare.png")
 
     # V4: Aktiva spelare per vecka
@@ -3349,12 +3583,12 @@ def write_visualizations_sheet(
         ax.plot(xs, v4_values, marker="o", color="#C56A12", linewidth=2.0, zorder=3)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(x) for x in v4_labels], rotation=30, ha="right")
-        ax.set_ylabel("Antal spelare")
+        ax.set_ylabel(tr("Antal spelare"))
         ax.set_ylim(bottom=0)
         ax.grid(axis="y", alpha=0.2, zorder=1)
     else:
         _empty_plot(ax)
-    ax.set_title("V4: Aktiva spelare per vecka")
+    ax.set_title(tr("V4: Aktiva spelare per vecka"))
     v4_path = _save_fig(fig, "V4_aktiva_spelare_vecka.png")
 
     # V5: Ligans snitt GeoGuessr-poang per underliga-kategori
@@ -3380,10 +3614,10 @@ def write_visualizations_sheet(
         ax.bar(xs, v5_values, color=["#2A77D4", "#279B70", "#7A67D8", "#E0862B", "#B4581B", "#D9A441"])
         ax.set_xticks(xs)
         ax.set_xticklabels(v5_labels, rotation=20, ha="right")
-        ax.set_ylabel("Snitt GeoGuessr-poäng")
+        ax.set_ylabel(tr("Snittpoäng"))
     else:
         _empty_plot(ax)
-    ax.set_title("V5: Ligans snitt GeoGuessr-poäng per underliga-kategori")
+    ax.set_title(tr("V5: Ligans snitt GeoGuessr-poäng per underliga-kategori"))
     v5_path = _save_fig(fig, "V5_ligans_snitt_ggpoang_underliga.png")
 
     # V6: Topp-spelare per karttyp (snitt)
@@ -3414,11 +3648,11 @@ def write_visualizations_sheet(
         ax.bar(xs + w, v6_pivot["NMPZ"].tolist(), width=w, label="NMPZ", color="#7A67D8")
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(x) for x in v6_pivot.index], rotation=30, ha="right", fontsize=10)
-        ax.set_ylabel("Snitt GeoGuessr-poäng")
+        ax.set_ylabel(tr("Snittpoäng"))
         ax.legend(fontsize=10)
     else:
         _empty_plot(ax)
-    ax.set_title("V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)")
+    ax.set_title(tr("V6: Topp-spelare per karttyp (snitt GeoGuessr-poäng)"))
     v6_path = _save_fig(fig, "V6_toppspelare_karttyp.png")
 
     # V7: Poangfordelning per karttyp (boxplot)
@@ -3430,10 +3664,10 @@ def write_visualizations_sheet(
     ]
     if any(len(b) > 0 for b in box_data):
         ax.boxplot(box_data, labels=["Moving", "No move", "NMPZ"], showfliers=False)
-        ax.set_ylabel("GeoGuessr-poäng")
+        ax.set_ylabel(tr("GeoGuessr-poäng"))
     else:
         _empty_plot(ax)
-    ax.set_title("V7: Poängfördelning per karttyp")
+    ax.set_title(tr("V7: Poängfördelning per karttyp"))
     v7_path = _save_fig(fig, "V7_poangfordelning_karttyp_boxplot.png")
 
     # V8: Stabilitet vs niva (std mot snitt)
@@ -3456,11 +3690,11 @@ def write_visualizations_sheet(
             [str(x) for x in stab["player"].tolist()],
             fontsize=9,
         )
-        ax.set_xlabel("Standardavvikelse i poäng")
-        ax.set_ylabel("Snitt GeoGuessr-poäng")
+        ax.set_xlabel(tr("Standardavvikelse i poäng"))
+        ax.set_ylabel(tr("Snittpoäng"))
     else:
         _empty_plot(ax)
-    ax.set_title("V8: Stabilitet vs nivå (std mot snittpoäng)")
+    ax.set_title(tr("V8: Stabilitet vs nivå (std mot snittpoäng)"))
     v8_path = _save_fig(fig, "V8_stabilitet_vs_niva.png")
 
     # V9: Veckotrend-heatmap
@@ -3492,10 +3726,10 @@ def write_visualizations_sheet(
         ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right", fontsize=10)
         ax.set_yticks(list(range(len(centered.index))))
         ax.set_yticklabels([_safe_plot_label(p) for p in centered.index], fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Över/under eget snitt")
+        fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label=tr("Över/under eget snitt"))
     else:
         _empty_plot(ax)
-    ax.set_title("V9: Veckotrend-heatmap (över/under eget snitt)")
+    ax.set_title(tr("V9: Veckotrend-heatmap (över/under eget snitt)"))
     v9_path = _save_fig(fig, "V9_veckotrend_heatmap.png")
 
     # V10: Stil-PCA med loadings och tolkning
@@ -3510,7 +3744,7 @@ def write_visualizations_sheet(
         colors = style_pca_points["specialization_index"].fillna(50.0).tolist()
         sizes = [38.0 + min(58.0, float(v) * 3.0) for v in style_pca_points["maps_counted"].fillna(0.0).tolist()]
         sc = ax_sc.scatter(style_pca_points["pc1"], style_pca_points["pc2"], c=colors, cmap="viridis", s=sizes, alpha=0.86)
-        fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label="Specialiseringsindex")
+        fig.colorbar(sc, ax=ax_sc, fraction=0.035, pad=0.02, label=tr("Specialiseringsindex"))
         _annotate_all_points(
             ax_sc,
             [float(x) for x in style_pca_points["pc1"].tolist()],
@@ -3518,8 +3752,8 @@ def write_visualizations_sheet(
             [str(x) for x in style_pca_points["player"].tolist()],
             fontsize=9,
         )
-        ax_sc.set_xlabel(f"PC1 ({style_pca_info.get('pc1_pct', 0.0):.1f}% forklarad varians)")
-        ax_sc.set_ylabel(f"PC2 ({style_pca_info.get('pc2_pct', 0.0):.1f}% forklarad varians)")
+        ax_sc.set_xlabel(trf("PC1 ({pct:.1f}% forklarad varians)", pct=style_pca_info.get("pc1_pct", 0.0)))
+        ax_sc.set_ylabel(trf("PC2 ({pct:.1f}% forklarad varians)", pct=style_pca_info.get("pc2_pct", 0.0)))
 
         load_pc1 = style_pca_loadings.reindex(style_pca_loadings["pc1_loading"].abs().sort_values(ascending=False).index).head(6)
         load_pc2 = style_pca_loadings.reindex(style_pca_loadings["pc2_loading"].abs().sort_values(ascending=False).index).head(6)
@@ -3528,29 +3762,32 @@ def write_visualizations_sheet(
         ax_l1.set_yticks(list(range(len(load_pc1))))
         ax_l1.set_yticklabels([_safe_plot_label(x) for x in load_pc1["feature_label"].tolist()], fontsize=9)
         ax_l1.invert_yaxis()
-        ax_l1.set_title("PC1: starkaste bidrag")
+        ax_l1.set_title(tr("PC1: starkaste bidrag"))
 
         ax_l2.barh(list(range(len(load_pc2))), load_pc2["pc2_loading"].astype(float).tolist(), color="#279B70")
         ax_l2.set_yticks(list(range(len(load_pc2))))
         ax_l2.set_yticklabels([_safe_plot_label(x) for x in load_pc2["feature_label"].tolist()], fontsize=9)
         ax_l2.invert_yaxis()
-        ax_l2.set_title("PC2: starkaste bidrag")
+        ax_l2.set_title(tr("PC2: starkaste bidrag"))
 
         pc1_top = ", ".join(load_pc1["feature_label"].head(3).tolist())
         pc2_top = ", ".join(load_pc2["feature_label"].head(3).tolist())
         ax_sc.text(
             0.02,
             0.02,
-            f"PC1 drivs mest av: {pc1_top}\nPC2 drivs mest av: {pc2_top}",
+            (
+                f"{'PC1 is driven mostly by' if ACTIVE_LANG == 'en' else 'PC1 drivs mest av'}: {pc1_top}\n"
+                f"{'PC2 is driven mostly by' if ACTIVE_LANG == 'en' else 'PC2 drivs mest av'}: {pc2_top}"
+            ),
             transform=ax_sc.transAxes,
             fontsize=9,
             bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
         )
     else:
-        _empty_plot(ax_sc, "För få kvalificerade spelare")
+        _empty_plot(ax_sc, tr("För få kvalificerade spelare"))
         _empty_plot(ax_l1)
         _empty_plot(ax_l2)
-    fig.suptitle("V10: Stil-PCA + bidrag till PC1/PC2", fontsize=12, y=0.99)
+    fig.suptitle(tr("V10: Stil-PCA + bidrag till PC1/PC2"), fontsize=12, y=0.99)
     v10_path = _save_fig(fig, "V10_stil_pca_loadings.png", apply_tight_layout=False)
 
     # V11: Featurevikter och komponenter
@@ -3568,8 +3805,8 @@ def write_visualizations_sheet(
     ax_w.set_yticks(list(range(len(feature_merge))))
     ax_w.set_yticklabels([_safe_plot_label(x) for x in feature_merge["feature_label"].tolist()], fontsize=9)
     ax_w.invert_yaxis()
-    ax_w.set_xlabel("Vikt i likhet/PCA")
-    ax_w.set_title("Featurevikter")
+    ax_w.set_xlabel(tr("Vikt i likhet/PCA"))
+    ax_w.set_title(tr("Featurevikter"))
 
     ax_t.axis("off")
     lines = [
@@ -3578,14 +3815,14 @@ def write_visualizations_sheet(
         f"PC2 ({style_pca_info.get('pc2_pct', 0.0):.1f}%): "
         + ", ".join(feature_merge.reindex(feature_merge["pc2_loading"].abs().sort_values(ascending=False).index)["feature_label"].head(4).tolist()),
         "",
-        "Likheten nedviktar totalpoäng och uppviktar:",
-        "- 5k-frekvens och 5k-fart",
-        "- bästa-runda-effektivitet",
-        "- no move / NMPZ / moving-profiler",
-        "- specialisering och konsistens",
+        "Similarity downweights total points and upweights:" if ACTIVE_LANG == "en" else "Likheten nedviktar totalpoäng och uppviktar:",
+        "- 5k rate and 5k speed" if ACTIVE_LANG == "en" else "- 5k-frekvens och 5k-fart",
+        "- best-round efficiency" if ACTIVE_LANG == "en" else "- bästa-runda-effektivitet",
+        "- no move / NMPZ / moving profiles" if ACTIVE_LANG == "en" else "- no move / NMPZ / moving-profiler",
+        "- specialization and consistency" if ACTIVE_LANG == "en" else "- specialisering och konsistens",
     ]
     ax_t.text(0.0, 0.98, "\n".join(lines), va="top", fontsize=11)
-    ax_t.set_title("Vad PCA:n faktiskt visar")
+    ax_t.set_title(tr("Vad PCA:n faktiskt visar"))
     v11_path = _save_fig(fig, "V11_featurevikter_och_pca_forklaring.png", apply_tight_layout=False)
 
     # V12/V13: Utveckling vecka for vecka (kumulativ liga)
@@ -3634,12 +3871,12 @@ def write_visualizations_sheet(
         _annotate_line_endpoints(ax, xs, y_by_player_rank, invert_y=True)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")
-        ax.set_ylabel("Placering")
+        ax.set_ylabel(tr("Placering"))
         ax.set_ylim(max(1.0, float(len(all_rank_players)) + 0.75), 0.25)
         ax.grid(axis="y", alpha=0.18)
     else:
         _empty_plot(ax)
-    ax.set_title("V12: Placering vecka för vecka (kumulativ liga)")
+    ax.set_title(tr("V12: Placering vecka för vecka (kumulativ liga)"))
     v12_path = _save_fig(fig, "V12_placering_vecka_for_vecka.png")
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_w * 0.75))
@@ -3659,12 +3896,12 @@ def write_visualizations_sheet(
         _annotate_line_endpoints(ax, xs, y_by_player_points, invert_y=False)
         ax.set_xticks(xs)
         ax.set_xticklabels([_safe_plot_label(w) for w in weeks_order], rotation=30, ha="right")
-        ax.set_ylabel("Ackumulerad ligapoäng")
+        ax.set_ylabel(tr("Ackumulerad ligapoäng"))
         ax.grid(axis="y", alpha=0.18)
         ax.set_ylim(bottom=0)
     else:
         _empty_plot(ax)
-    ax.set_title("V13: Ackumulerad ligapoäng vecka för vecka")
+    ax.set_title(tr("V13: Ackumulerad ligapoäng vecka för vecka"))
     v13_path = _save_fig(fig, "V13_ackumulerad_ligapoang_vecka_for_vecka.png")
 
     advanced_image_specs: List[Tuple[Path, int, int]] = []
@@ -3691,10 +3928,10 @@ def write_visualizations_sheet(
             ax.set_xticklabels([_safe_plot_label(x) for x in style_heatmap.columns], rotation=35, ha="right", fontsize=9)
             ax.set_yticks(list(range(len(style_heatmap.index))))
             ax.set_yticklabels([_safe_plot_label(x) for x in style_heatmap.index], fontsize=9)
-            fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label="Cosinuslikhet")
+            fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02, label=tr("Cosinuslikhet"))
         else:
-            _empty_plot(ax, "För få kvalificerade spelare")
-        ax.set_title("V14: Spelstilslikhet heatmap")
+            _empty_plot(ax, tr("För få kvalificerade spelare"))
+        ax.set_title(tr("V14: Spelstilslikhet heatmap"))
         v14_path = _save_fig(fig, "V14_spelstilslikhet_heatmap.png")
 
         # V15: 5k-effektivitet
@@ -3714,7 +3951,7 @@ def write_visualizations_sheet(
                     s=sizes,
                     alpha=0.86,
                 )
-                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="NMPZ-styrka")
+                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label=tr("NMPZ-styrka"))
                 _annotate_all_points(
                     ax,
                     [float(x) for x in style_plot["fivek_rate_index"].tolist()],
@@ -3722,13 +3959,13 @@ def write_visualizations_sheet(
                     [str(x) for x in style_plot["player"].tolist()],
                     fontsize=9,
                 )
-                ax.set_xlabel("5k-frekvens")
-                ax.set_ylabel("5k-fart")
+                ax.set_xlabel(tr("5k-frekvens"))
+                ax.set_ylabel(tr("5k-fart"))
             else:
-                _empty_plot(ax, "För få spelare")
+                _empty_plot(ax, tr("För få spelare"))
         else:
-            _empty_plot(ax, "Ingen spelstilsdata")
-        ax.set_title("V15: 5k-effektivitet (frekvens vs fart)")
+            _empty_plot(ax, tr("Ingen spelstilsdata"))
+        ax.set_title(tr("V15: 5k-effektivitet (frekvens vs fart)"))
         v15_path = _save_fig(fig, "V15_5k_effektivitet.png")
 
         # V16/V17: Steg för 5k i moving, uppdelat på Sverige / Världen
@@ -3738,8 +3975,8 @@ def write_visualizations_sheet(
         dfo["count_5000_rounds"] = pd.to_numeric(dfo.get("count_5000_rounds"), errors="coerce").fillna(0.0)
 
         for tag, title, mask in [
-            ("V16", "V16: Steg för 5k Sverige", dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
-            ("V17", "V17: Steg för 5k Världen", (~dfo["is_sweden"]) & (dfo["mode_category"] == "moving")),
+            ("V16", tr("V16: Steg för 5k Sverige"), dfo["is_sweden"] & (dfo["mode_category"] == "moving")),
+            ("V17", tr("V17: Steg för 5k Världen"), (~dfo["is_sweden"]) & (dfo["mode_category"] == "moving")),
         ]:
             part = dfo[mask & dfo["fastest_5000_round_steps"].notna() & dfo["fastest_5000_round_time"].notna()].copy()
             fig, ax = plt.subplots(figsize=(BASE_FIG_W, BASE_FIG_H))
@@ -3767,7 +4004,7 @@ def write_visualizations_sheet(
                     edgecolors="white",
                     linewidths=0.6,
                 )
-                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label="Antal moving-5k")
+                fig.colorbar(sc, ax=ax, fraction=0.035, pad=0.02, label=tr("Antal moving-5k"))
                 _annotate_all_points(
                     ax,
                     [float(x) for x in by_player["median_steps"].tolist()],
@@ -3775,13 +4012,13 @@ def write_visualizations_sheet(
                     [f"{p} ({int(c)})" for p, c in zip(by_player["player"].tolist(), by_player["moving_5ks"].tolist())],
                     fontsize=9,
                 )
-                ax.set_xlabel("Mediansteg för 5k (moving)")
-                ax.set_ylabel("Mediantid för 5k (s)")
+                ax.set_xlabel(tr("Mediansteg för 5k (moving)"))
+                ax.set_ylabel(tr("Mediantid för 5k (s)"))
                 fig.subplots_adjust(top=0.92, right=0.88)
                 ax.text(
                     0.98,
                     0.98,
-                    "Färg = antal moving-5k   |   Storlek = medianavstånd till 5k",
+                    tr("Färg = antal moving-5k   |   Storlek = medianavstånd till 5k"),
                     transform=ax.transAxes,
                     ha="right",
                     va="top",
@@ -3789,7 +4026,7 @@ def write_visualizations_sheet(
                     bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
                 )
             else:
-                _empty_plot(ax, "Ingen moving-5k-data")
+                _empty_plot(ax, tr("Ingen moving-5k-data"))
             ax.set_title(title)
             out_path = _save_fig(fig, f"{tag}_steg_for_5k_{'sverige' if tag == 'V16' else 'varlden'}.png")
             advanced_image_specs.append((out_path, 720, 540))
@@ -3809,7 +4046,7 @@ def write_visualizations_sheet(
             )
             pos_df = style_pca_points[style_pca_points["player"].astype(str).isin(style_heatmap_players)].copy()
             if pos_df.empty:
-                _empty_plot(ax, "För få kvalificerade spelare")
+                _empty_plot(ax, tr("För få kvalificerade spelare"))
             else:
                 pos_df["player"] = pos_df["player"].astype(str)
                 pos_df = pos_df.drop_duplicates(subset=["player"]).set_index("player").reindex(style_heatmap_players)
@@ -3838,7 +4075,7 @@ def write_visualizations_sheet(
                         network_edges.append((edge_key[0], edge_key[1], sim_f))
 
                 if not network_edges:
-                    _empty_plot(ax, "Likheterna är för svaga för nätverk")
+                    _empty_plot(ax, tr("Likheterna är för svaga för nätverk"))
                 else:
                     archetype_lookup = (
                         df_style[df_style["player"].astype(str).isin(style_heatmap_players)]
@@ -3848,14 +4085,14 @@ def write_visualizations_sheet(
                         .to_dict()
                     )
                     color_map = {
-                        "5k-jagare": "#D94841",
-                        "Effektiv avslutare": "#D9891B",
-                        "Metodisk & stabil": "#2E8B57",
-                        "NMPZ-specialist": "#6C5CE7",
-                        "No move-specialist": "#279B70",
-                        "Moving-specialist": "#2A77D4",
-                        "Clutch & volatil": "#A64D1F",
-                        "Allround": "#607D8B",
+                        tr("5k-jagare"): "#D94841",
+                        tr("Effektiv avslutare"): "#D9891B",
+                        tr("Metodisk & stabil"): "#2E8B57",
+                        tr("NMPZ-specialist"): "#6C5CE7",
+                        tr("No move-specialist"): "#279B70",
+                        tr("Moving-specialist"): "#2A77D4",
+                        tr("Clutch & volatil"): "#A64D1F",
+                        tr("Allround"): "#607D8B",
                     }
                     style_subset = (
                         df_style[df_style["player"].astype(str).isin(style_heatmap_players)]
@@ -3868,7 +4105,7 @@ def write_visualizations_sheet(
                         for v in pd.to_numeric(style_subset["maps_counted"], errors="coerce").fillna(0.0).tolist()
                     ]
                     node_colors = [
-                        color_map.get(archetype_lookup.get(player, "Allround"), "#607D8B")
+                        color_map.get(archetype_lookup.get(player, tr("Allround")), "#607D8B")
                         for player in style_heatmap_players
                     ]
 
@@ -3916,8 +4153,8 @@ def write_visualizations_sheet(
                         [str(x) for x in pos_df.index.tolist()],
                         fontsize=9,
                     )
-                    ax.set_xlabel("PC1-position")
-                    ax.set_ylabel("PC2-position")
+                    ax.set_xlabel(tr("PC1-position"))
+                    ax.set_ylabel(tr("PC2-position"))
                     ax.grid(alpha=0.15)
                     legend_handles = [
                         plt.Line2D(
@@ -3936,7 +4173,7 @@ def write_visualizations_sheet(
                     ax.legend(
                         handles=legend_handles,
                         loc="lower right",
-                        title="Arketyper",
+                        title=tr("Arketyper"),
                         frameon=True,
                         facecolor="white",
                         edgecolor="none",
@@ -3947,7 +4184,7 @@ def write_visualizations_sheet(
                     ax.text(
                         0.98,
                         0.98,
-                        "Kanter visar upp till fyra starkaste likheter per spelare (minst 0,30).\nNodfärg = arketyp, nodstorlek = antal kartor.",
+                        tr("Kanter visar upp till fyra starkaste likheter per spelare (minst 0,30).\nNodfärg = arketyp, nodstorlek = antal kartor."),
                         transform=ax.transAxes,
                         fontsize=9,
                         ha="right",
@@ -3955,8 +4192,8 @@ def write_visualizations_sheet(
                         bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "none", "alpha": 0.78},
                     )
         else:
-            _empty_plot(ax, "För få kvalificerade spelare")
-        ax.set_title("V18: Spelstilslikhet som nätverk")
+            _empty_plot(ax, tr("För få kvalificerade spelare"))
+        ax.set_title(tr("V18: Spelstilslikhet som nätverk"))
         v18_path = _save_fig(fig, "V18_spelstilslikhet_natverk.png")
         advanced_image_specs.append((v18_path, 720, 540))
 
@@ -3998,7 +4235,7 @@ def write_visualizations_sheet(
 
 
 def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str = "default") -> None:
-    ws = wb.create_sheet("Underligor")
+    ws = wb.create_sheet(tr("Underligor"))
     league_layout = [
         ("Moving", 3, 1),
         ("No move", 3, 8),
@@ -4011,7 +4248,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
     block_cols = len(block_widths)
     gap_cols = 1
     total_cols = 27
-    merge_and_style(ws, 1, 1, 1, total_cols, "Underligor", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 1, total_cols, tr("Underligor"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     widths: Dict[int, float] = {}
     start_cols = sorted({start_col for _, _, start_col in league_layout})
@@ -4024,7 +4261,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
 
     tables = compute_subleague_tables(df_overview)
     fast_tables = compute_fast_round_tables(df_overview)
-    headers = ["#", "Spelare", "Poäng", "Snitt pts", "Kartor", "Veckor"]
+    headers = ["#", tr("Spelare"), tr("Poäng"), tr("Snitt pts"), tr("Kartor"), tr("Veckor")]
     first_row_max_rows = 0
     second_row_max_rows = 0
 
@@ -4032,7 +4269,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
         if base_row is None:
             base_row = 3 + 2 + first_row_max_rows + 3
         end_col = start_col + block_cols - 1
-        merge_and_style(ws, base_row, start_col, base_row, end_col, league_name, fill=MID, font=FONT_HDR_MED, align=CENTER)
+        merge_and_style(ws, base_row, start_col, base_row, end_col, tr(league_name), fill=MID, font=FONT_HDR_MED, align=CENTER)
 
         header_row = base_row + 1
         for j, h in enumerate(headers):
@@ -4076,12 +4313,12 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
 
     # Extra topplistor: snabbaste 5000-rundor (fallback: högsta enskilda runda)
     fast_section_row = 3 + 2 + first_row_max_rows + 3
-    fast_headers = ["#", "Spelare", "Runda pts", "Tid"]
-    fast_leagues = ["Sverige", "Världen"]
+    fast_headers = ["#", tr("Spelare"), tr("Runda pts"), tr("Tid")]
+    fast_leagues = [("Sverige", tr("Sverige")), ("Världen", tr("Världen"))]
     fast_block_cols = len(fast_headers)
     fast_start_cols = [1, 8]  # align with block-grid columns above (1, 8, 15, 22)
 
-    for i, fast_name in enumerate(fast_leagues):
+    for i, (fast_key, fast_name) in enumerate(fast_leagues):
         start_col = fast_start_cols[i]
         end_col = start_col + fast_block_cols - 1
         merge_and_style(
@@ -4090,7 +4327,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
             start_col,
             fast_section_row,
             end_col,
-            f"Snabbaste 5k - {fast_name}",
+            tr(f"Snabbaste 5k - {fast_name}") if ACTIVE_LANG == "sv" else f"Fastest 5k - {fast_name}",
             fill=MID,
             font=FONT_HDR_MED,
             align=CENTER,
@@ -4102,7 +4339,7 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
             ws.cell(header_row, c).value = h
             style_cell(ws, header_row, c, fill=MID, font=FONT_HDR, align=CENTER)
 
-        table = fast_tables.get(fast_name, pd.DataFrame())
+        table = fast_tables.get(fast_key, pd.DataFrame())
         data_start_row = fast_section_row + 2
         for idx, row in enumerate(table.itertuples(index=False), start=1):
             r = data_start_row + (idx - 1)
@@ -4125,16 +4362,16 @@ def write_underligor_sheet(wb: Workbook, df_overview: pd.DataFrame, sort_by: str
             start_col=start_col,
             end_row=header_row + len(table),
             end_col=end_col,
-            name_hint=f"Fast5k_{fast_name}",
+            name_hint=f"Fast5k_{fast_key}",
         )
 
     ws.freeze_panes = "A5"
 
 
 def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None) -> None:
-    ws = wb.create_sheet("Information")
+    ws = wb.create_sheet(tr("Information"))
 
-    merge_and_style(ws, 1, 1, 2, 2, "Information", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    merge_and_style(ws, 1, 1, 2, 2, tr("Information"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
 
     rows = _normalize_information_rows(info_rows if info_rows is not None else default_information_rows())
 
@@ -4145,7 +4382,7 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
     for i, text in enumerate(rows, start=0):
         r = 3 + i
         fill = ROW_A if (i % 2 == 0) else ROW_B
-        is_subtle = text.startswith("Mer info:")
+        is_subtle = text.startswith("Mer info:") or text.startswith("More info:")
         display_text, url = _extract_information_link(text)
         ws.cell(r, 1).value = "·" if is_subtle else "•"
         ws.cell(r, 2).value = _excel_hyperlink_formula(url, display_text) if url else display_text
@@ -4166,18 +4403,18 @@ def write_information_sheet(wb: Workbook, info_rows: Optional[List[str]] = None)
 
 
 def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.DataFrame) -> None:
-    ws = wb.create_sheet("Spelstil")
-    merge_and_style(ws, 1, 1, 1, 21, "Spelstilsanalys", fill=DARK, font=FONT_HDR_BIG, align=CENTER)
+    ws = wb.create_sheet(tr("Spelarnas spelstil"))
+    merge_and_style(ws, 1, 1, 1, 21, tr("Spelstilsanalys"), fill=DARK, font=FONT_HDR_BIG, align=CENTER)
     ws["A2"] = (
-        "Likhet bygger på en viktad cosinuslikhet där 5k-förmåga, effektivitet, "
-        "mode-profiler och stabilitet väger tyngre än totalpoäng. "
-        f"Kvalificering: minst {STYLE_MIN_MAPS} kartor eller {STYLE_MIN_WEEKS} veckor."
+        tr("Likhet bygger på en viktad cosinuslikhet där 5k-förmåga, effektivitet, mode-profiler och stabilitet väger tyngre än totalpoäng. ")
+        + " "
+        + trf("STYLE_QUALIFICATION_EXPLAINER", maps=STYLE_MIN_MAPS, weeks=STYLE_MIN_WEEKS)
     )
     ws["A2"].font = FONT_BODY_SUBTLE
     ws.row_dimensions[2].height = 34
 
     if df_style.empty:
-        ws["A4"] = "Ingen data tillgänglig för spelstilsanalys."
+        ws["A4"] = tr("Ingen data tillgänglig för spelstilsanalys.")
         ws["A4"].font = Font(color="AA0000", bold=True)
         return
 
@@ -4185,9 +4422,9 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
     _, pca_loadings, pca_info = compute_style_pca(df_style)
 
     headers = [
-        "#", "Spelare", "Arketyp", "Kartor", "Veckor", "Kval.",
-        "5k-frekv.", "5k-fart", "5k-steg(M)", "Bäst-eff.", "Tid-eff.", "Konsistens",
-        "Moving", "No move", "NMPZ", "Spec.", "Lik 1", "Likhet", "Lik 2", "Likhet 2", "Prec.-stöd",
+        "#", tr("Spelare"), tr("Arketyp"), tr("Kartor"), tr("Veckor"), tr("Kval."),
+        tr("5k-frekv."), tr("5k-fart"), tr("5k-steg(M)"), tr("Bäst-eff."), tr("Tid-eff."), tr("Konsistens"),
+        "Moving", "No move", "NMPZ", tr("Spec."), tr("Lik 1"), tr("Likhet"), tr("Lik 2"), tr("Likhet 2"), tr("Prec.-stöd"),
     ]
     widths = {
         1: 4.5, 2: 22.0, 3: 18.0, 4: 8.0, 5: 8.0, 6: 8.0,
@@ -4243,7 +4480,7 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
         ws.cell(r, 3).value = row.style_archetype
         ws.cell(r, 4).value = int(getattr(row, "maps_counted", 0) or 0)
         ws.cell(r, 5).value = int(getattr(row, "weeks_counted", 0) or 0)
-        ws.cell(r, 6).value = "Ja" if bool(getattr(row, "is_qualified", False)) else "Nej"
+        ws.cell(r, 6).value = tr("Ja") if bool(getattr(row, "is_qualified", False)) else tr("Nej")
 
         for c in range(1, 7):
             align = LEFT if c in (2, 3) else CENTER
@@ -4282,8 +4519,8 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
     spacer_col = 22
     feature_start_col = 23
     ws.column_dimensions[get_column_letter(spacer_col)].width = 3.0
-    merge_and_style(ws, 1, feature_start_col, 1, feature_start_col + 4, "PCA / featureforklaring", fill=DARK, font=FONT_HDR_MED, align=CENTER)
-    feature_headers = ["Feature", "Vikt", "PC1", "PC2", "Tolkning"]
+    merge_and_style(ws, 1, feature_start_col, 1, feature_start_col + 4, tr("PCA / featureforklaring"), fill=DARK, font=FONT_HDR_MED, align=CENTER)
+    feature_headers = [tr("Feature"), tr("Vikt"), "PC1", "PC2", tr("Tolkning")]
     for offset, head in enumerate(feature_headers):
         style_cell(ws, 3, feature_start_col + offset, fill=MID, font=FONT_HDR, align=CENTER)
         ws.cell(3, feature_start_col + offset).value = head
@@ -4312,20 +4549,21 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
     pc2_top = ", ".join(loadings_sorted.sort_values("pc2_loading", ascending=False)["feature_label"].head(3).tolist()) if not loadings_sorted.empty else ""
     ws.merge_cells(start_row=2, start_column=feature_start_col, end_row=2, end_column=feature_start_col + 4)
     ws.cell(2, feature_start_col).value = (
-        f"PC1 ({pca_info.get('pc1_pct', 0.0):.1f}%): {pc1_top or 'för lite data'}\n"
-        f"PC2 ({pca_info.get('pc2_pct', 0.0):.1f}%): {pc2_top or 'för lite data'}"
+        trf("PC1_EXPLAINER", pct=pca_info.get("pc1_pct", 0.0), top=pc1_top or tr("för lite data"))
+        + "\n"
+        + trf("PC2_EXPLAINER", pct=pca_info.get("pc2_pct", 0.0), top=pc2_top or tr("för lite data"))
     )
     style_cell(ws, 2, feature_start_col, fill=WHITE, font=FONT_BODY_SUBTLE, align=LEFT)
     ws.row_dimensions[2].height = max(ws.row_dimensions[2].height or 0, 38)
 
     matrix_start_row = max(header_row + len(sorted_style) + 4, 6 + len(loadings_sorted))
-    ws.cell(matrix_start_row, 1).value = "Likhetsmatris"
+    ws.cell(matrix_start_row, 1).value = tr("Likhetsmatris")
     ws.cell(matrix_start_row, 1).font = Font(bold=True, color="1B314B")
-    ws.cell(matrix_start_row + 1, 1).value = "Visar kvalificerade spelare, begränsat för läsbarhet."
+    ws.cell(matrix_start_row + 1, 1).value = tr("Visar kvalificerade spelare, begränsat för läsbarhet.")
     ws.cell(matrix_start_row + 1, 1).font = FONT_BODY_SUBTLE
 
     if df_similarity.empty or "player" not in df_similarity.columns:
-        ws.cell(matrix_start_row + 3, 1).value = "För få kvalificerade spelare för likhetsmatris."
+        ws.cell(matrix_start_row + 3, 1).value = tr("För få kvalificerade spelare för likhetsmatris.")
         ws.cell(matrix_start_row + 3, 1).font = Font(color="AA0000", bold=True)
         return
 
@@ -4341,7 +4579,7 @@ def write_style_sheet(wb: Workbook, df_style: pd.DataFrame, df_similarity: pd.Da
 
     start_r = matrix_start_row + 3
     start_c = 2
-    ws.cell(start_r, 1).value = "Spelare"
+    ws.cell(start_r, 1).value = tr("Spelare")
     style_cell(ws, start_r, 1, fill=MID, font=FONT_HDR, align=CENTER)
     for j, player in enumerate(qualified_players, start=start_c):
         ws.cell(start_r, j).value = player
@@ -4460,6 +4698,7 @@ def parse_week_specs(week_args: List[str]) -> List[WeekSpec]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    active_lang = set_active_language(args.lang)
     weeks = parse_week_specs(args.week)
 
     ncfa = (args.ncfa or os.environ.get("GEOGUESSR_NCFA", "")).strip()
@@ -4474,6 +4713,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("[START] advanced_analytics:", not bool(args.skip_advanced_analytics))
     print("[START] tz:", args.tz)
     print("[START] sort_by:", normalize_sort_key(args.sort_by))
+    print("[START] lang:", active_lang)
 
     if args.information_config.strip():
         info_config_path = Path(args.information_config.strip()).expanduser()

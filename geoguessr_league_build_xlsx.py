@@ -5,6 +5,7 @@ import html
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -38,6 +39,11 @@ ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 EPOCH_RE = re.compile(r"^\d{10,13}$")
 SETTING_LABEL_RE = re.compile(r'game-settings-list_settingLabel[^"]*">(.*?)</div>', re.S)
 URL_RE = re.compile(r"https?://\S+")
+
+HTTP_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+HTTP_MAX_RETRIES = 5
+HTTP_BACKOFF_BASE_SECONDS = 1.4
+HTTP_BACKOFF_MAX_SECONDS = 15.0
 
 DEFAULT_TZ = "Europe/Stockholm"
 DEFAULT_INFORMATION_CONFIG_NAME = "information_config_v2.json"
@@ -270,21 +276,76 @@ def make_session(ncfa: str) -> requests.Session:
     return s
 
 
+def _retry_delay_seconds(response: Optional[requests.Response], attempt: int) -> float:
+    if response is not None:
+        retry_after = str(response.headers.get("Retry-After") or "").strip()
+        if retry_after:
+            try:
+                parsed = float(retry_after)
+                if parsed > 0:
+                    return min(HTTP_BACKOFF_MAX_SECONDS, parsed)
+            except Exception:
+                pass
+
+    expo = HTTP_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1))
+    jitter = random.uniform(0.0, 0.6)
+    return min(HTTP_BACKOFF_MAX_SECONDS, expo + jitter)
+
+
+def _raise_http_error(response: requests.Response, url: str) -> None:
+    snippet = response.text[:300].replace("\n", "\\n")
+    raise RuntimeError(f"HTTP {response.status_code} for {url}: {snippet}")
+
+
+def _http_get_with_retries(
+    session: requests.Session,
+    url: str,
+    timeout: float,
+    debug: bool,
+) -> requests.Response:
+    last_error: Optional[Exception] = None
+    response: Optional[requests.Response] = None
+
+    for attempt in range(1, HTTP_MAX_RETRIES + 1):
+        response = None
+        try:
+            response = session.get(url, timeout=timeout)
+            debug_print(debug, f"[HTTP] GET {url} -> {response.status_code} len={len(response.text)}")
+            if response.status_code < 400:
+                return response
+            if response.status_code not in HTTP_RETRYABLE_STATUS or attempt >= HTTP_MAX_RETRIES:
+                _raise_http_error(response, url)
+            delay = _retry_delay_seconds(response, attempt)
+            print(
+                f"[RETRY] GET {url} -> HTTP {response.status_code}. "
+                f"Försök {attempt}/{HTTP_MAX_RETRIES}, väntar {delay:.1f}s."
+            )
+            time.sleep(delay)
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= HTTP_MAX_RETRIES:
+                raise RuntimeError(f"Request failed for {url}: {exc}") from exc
+            delay = _retry_delay_seconds(response, attempt)
+            print(
+                f"[RETRY] GET {url} -> {exc.__class__.__name__}. "
+                f"Försök {attempt}/{HTTP_MAX_RETRIES}, väntar {delay:.1f}s."
+            )
+            time.sleep(delay)
+
+    if last_error is not None:
+        raise RuntimeError(f"Request failed for {url}: {last_error}") from last_error
+    if response is not None:
+        _raise_http_error(response, url)
+    raise RuntimeError(f"Request failed for {url}")
+
+
 def http_get_json(session: requests.Session, url: str, timeout: float, debug: bool) -> Any:
-    r = session.get(url, timeout=timeout)
-    debug_print(debug, f"[HTTP] GET {url} -> {r.status_code} len={len(r.text)}")
-    if r.status_code >= 400:
-        snippet = r.text[:300].replace("\n", "\\n")
-        raise RuntimeError(f"HTTP {r.status_code} for {url}: {snippet}")
+    r = _http_get_with_retries(session, url, timeout=timeout, debug=debug)
     return r.json()
 
 
 def http_get_text(session: requests.Session, url: str, timeout: float, debug: bool) -> str:
-    r = session.get(url, timeout=timeout)
-    debug_print(debug, f"[HTTP] GET {url} -> {r.status_code} len={len(r.text)}")
-    if r.status_code >= 400:
-        snippet = r.text[:300].replace("\n", "\\n")
-        raise RuntimeError(f"HTTP {r.status_code} for {url}: {snippet}")
+    r = _http_get_with_retries(session, url, timeout=timeout, debug=debug)
     return r.text
 
 

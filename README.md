@@ -55,6 +55,12 @@ Rekommenderad start (forvanlig distribution till slutanvandare):
 
 `dist/GeoLeagueBuilder.exe`
 
+Nedladdningslänk till en färdig `.exe`:
+
+[Ladda ner GeoLeagueBuilder (.exe)](https://drive.google.com/file/d/1wcj0CyYKskqJcD8KjDv2rG4VGvSS5Q7A/view?usp=drive_link)
+
+Obs: den versionen är inte garanterat den senaste. För att få senaste versionen, bygg `.exe` från projektet via standardflödet nedan.
+
 Alternativ start fran kallsrepo:
 
 ```bash
